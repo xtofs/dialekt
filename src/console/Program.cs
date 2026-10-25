@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dialekt;
+using Dialekt.Parsing;
 using Dialekt.Scanning;
 
 // Usage: dotnet run --project src/console -- [--tree [--trivia]] [file...]

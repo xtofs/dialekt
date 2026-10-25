@@ -1,4 +1,4 @@
-namespace Dialekt;
+namespace Dialekt.Parsing;
 
 using Dialekt.Green;
 

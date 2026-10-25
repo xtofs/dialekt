@@ -4,7 +4,8 @@ internal record Token(string Kind, string Text, SourceSpan Span, string? Error =
 {
     public const string Eof = "Eof";
     public const string ErrorKind = "Error";
+    public const string SymbolKind = "Symbol";
 
     public bool IsTrivia => Kind is "Whitespace" or "SingleLineComment" or "MultiLineComment";
-    public bool IsSymbol => Scanner.SymbolKinds.Contains(Kind);
+    public bool IsSymbol => Kind == SymbolKind;
 }

@@ -2,6 +2,7 @@ namespace Dialekt.Scanning;
 
 using System.Reflection;
 using System.Text.RegularExpressions;
+using Dialekt.Green;
 
 internal class Scanner
 {
@@ -20,8 +21,9 @@ internal class Scanner
             .ToDictionary(m => m.Name.StripSuffix("Regex"), m => m.GetCustomAttribute<GeneratedRegexAttribute>()!.Pattern);
 
         var alternatives = string.Join("|", PatternOrder.Select(name => $"(?<{name}>{methods[name]})"));
-        var symbols = string.Join("|", Symbols.Select(s => $"(?<{s.Name}>{Regex.Escape(s.Symbol)})"));
-        _regex = new Regex($@"\G(?:{alternatives}|{symbols})", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+        // Longest first so that e.g. `=>` and `?<=` are not split into shorter symbols.
+        var symbols = string.Join("|", SyntaxFacts.SymbolKinds.Keys.OrderByDescending(sym => sym.Length).Select(Regex.Escape));
+        _regex = new Regex($@"\G(?:{alternatives}|(?<{Token.SymbolKind}>{symbols}))", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
     }
 
     /// <summary>
@@ -100,41 +102,4 @@ internal class Scanner
         pos = new Position(offset, line, column);
         return new Token(kind, text, new SourceSpan(start, pos), error);
     }
-
-    private static readonly string[] Terminals = [
-        ":",
-        "|",
-        ">",
-        "=",
-        "<",
-        "&",
-        ".",
-        "..",
-        ",",
-        "=>",
-        "+",
-        "*",
-        "?<=",
-        "?<!",
-        "?",
-        "?!",
-        "->",
-        "(",")",
-        "{","}",
-        "[","]",
-        ";",
-        ",",
-        "!",
-        "@",
-        "+=",
-        "?="
-    ];
-
-    // Longest first so that e.g. `=>` and `?<=` are not split into shorter symbols.
-    public static readonly (string Symbol, string Name)[] Symbols = [
-     ..   Terminals.Distinct().OrderByDescending(sym => sym.Length)
-            .Select(sym => (sym, string.Concat(sym.Select(c => (CodePoint.codePoints[c].Name.ToPascalCase())))))
-    ];
-
-    public static readonly HashSet<string> SymbolKinds = [.. Symbols.Select(s => s.Name)];
 }

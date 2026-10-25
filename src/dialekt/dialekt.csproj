@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
@@ -6,8 +6,4 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Dialekt</RootNamespace>
   </PropertyGroup>
-  
-  <ItemGroup>
-    <EmbeddedResource Include="res/UnicodeData.txt" />
-  </ItemGroup>
 </Project>
