@@ -40,7 +40,7 @@ public enum SyntaxCategory : byte
     SeparatorOperator,
 }
 
-/// <param name="Name">Name of the slot; becomes the property name of the typed view.</param>
+/// <param name="Name">Name of the slot, as used by <c>SyntaxNode.GetSlot</c>.</param>
 /// <param name="Kind">The accepted kind when <paramref name="Category"/> is <see cref="SyntaxCategory.None"/>.</param>
 /// <param name="Separator">For separated lists: the separator token kind.</param>
 public readonly record struct SlotSpec(string Name, SlotShape Shape, SyntaxKind Kind, SyntaxCategory Category = SyntaxCategory.None, SyntaxKind Separator = SyntaxKind.None)
@@ -50,7 +50,7 @@ public readonly record struct SlotSpec(string Name, SlotShape Shape, SyntaxKind 
 
 /// <summary>
 /// The shape of every node kind: an ordered, fixed list of slots. The parser slots the children of each node it builds
-/// against this table, so slot <i>i</i> of a kind always means the same thing; the typed views are generated from it.
+/// against this table, so slot <i>i</i> of a kind always means the same thing; slots are read by name with <c>SyntaxNode.GetSlot</c>.
 /// </summary>
 public static class SyntaxSchema
 {
@@ -58,6 +58,17 @@ public static class SyntaxSchema
 
     /// <summary>The slots of <paramref name="kind"/>; empty for tokens, trivia, placeholders, lists and error nodes.</summary>
     public static ReadOnlySpan<SlotSpec> GetSlots(SyntaxKind kind) => Table[(int)kind];
+
+    /// <summary>The index of the slot called <paramref name="slotName"/> in <paramref name="kind"/>, or -1.</summary>
+    public static int IndexOf(SyntaxKind kind, string slotName)
+    {
+        var slots = GetSlots(kind);
+        for (var i = 0; i < slots.Length; i++)
+        {
+            if (slots[i].Name == slotName) return i;
+        }
+        return -1;
+    }
 
     /// <summary>All node kinds that have slots, with their slots.</summary>
     public static IEnumerable<(SyntaxKind Kind, SlotSpec[] Slots)> All()

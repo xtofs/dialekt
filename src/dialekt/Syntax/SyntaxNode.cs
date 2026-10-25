@@ -55,7 +55,10 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     /// <summary>1-based line and column where the node's text starts.</summary>
     public (int Line, int Column) StartLineAndColumn => Tree.LineMap.GetLineAndColumn(TextStart);
 
-    /// <summary>The child in <paramref name="slot"/>; its position is the sum of the widths of the slots before it.</summary>
+    /// <summary>
+    ///   The child in <paramref name="slot"/>; its position is the sum 
+    ///   of the widths of the slots before it.
+    /// </summary>
     public SyntaxNode GetChild(int slot)
     {
         var green = Green;
@@ -68,6 +71,33 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
         }
         return new SyntaxNode(Tree, green.GetChildHandle(slot), position);
     }
+
+    /// <summary>
+    /// The child in the slot called <paramref name="name"/> (see <see cref="SyntaxSchema"/>). For an optional part that is not
+    /// there this is an <see cref="SyntaxKind.Absent"/> node (check <see cref="IsAbsent"/>); for a list slot it is the list node,
+    /// whose <see cref="Children"/> are the items.
+    /// </summary>
+    /// <exception cref="ArgumentException">The kind has no slot with that name.</exception>
+    public SyntaxNode GetSlot(string name)
+    {
+        return TryGetSlot(name, out var slot)
+            ? slot
+            : throw new ArgumentException(
+                $"{Kind} has no slot '{name}'; its slots are: {string.Join(", ", SyntaxSchema.GetSlots(Kind).ToArray().Select(s => s.Name))}.", nameof(name));
+    }
+
+    public bool TryGetSlot(string name, out SyntaxNode slot)
+    {
+        var index = SyntaxSchema.IndexOf(Kind, name);
+        slot = index >= 0 ? GetChild(index) : default;
+        return index >= 0;
+    }
+
+    /// <summary>An optional part that is not there.</summary>
+    public bool IsAbsent => Kind == SyntaxKind.Absent;
+
+    /// <summary>A required part the parser expected but did not find.</summary>
+    public bool IsMissing => (Flags & GreenNodeFlags.IsMissing) != 0;
 
     /// <summary>All children; for a token these are its leading trivia.</summary>
     public ChildList Children => new(this);

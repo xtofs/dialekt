@@ -42,7 +42,7 @@ public class TreeFormatter(string fileName)
         var text = "";
         if (node.IsToken && node.Kind != SyntaxKind.EndOfFileToken)
         {
-            text = " " + node.Text.Replace("\n", "\\n").Replace("\r", "\\r");
+            text = " " + node.Text.WithControlCharactersAsPictures();
         }
         var slot = slotName is null ? "" : $" {slotName}:";
         Console.WriteLine($"{slot} {node.Kind}{text} {_fileName}({line},{column})");

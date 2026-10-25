@@ -26,9 +26,6 @@ public sealed class SyntaxTree
     public LineMap LineMap => _lineMap.Value;
     public SyntaxNode Root => new(this, Green.RootHandle, 0);
 
-    /// <summary>The root as a typed view.</summary>
-    public GrammarSyntax Grammar => GrammarSyntax.Create(Root);
-
     /// <summary>
     /// The parent of <paramref name="node"/>, or null for the root. Green nodes do not know their parent, so this descends
     /// from the root by position: at each level the node itself is looked for among the children, then the child covering

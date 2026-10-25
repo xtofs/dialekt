@@ -24,28 +24,32 @@ parent pointer. Navigating just creates new views. `SyntaxTree.GetParent`/`Ances
 parent is really needed. A zero-width node (absent part, empty list) cannot be told from an equal sibling at the same
 position; for those the outermost match is returned.
 
-The **typed views** (`ParserRuleSyntax`, `AbstractElementSyntax`, ...) wrap a `SyntaxNode` and expose the slots as
-properties (`rule.Name`, `rule.Modifier` is null when absent, `group.Elements` is a `SyntaxList<...>`). Categories such as
-`AbstractElement` are structs with `AsGroup()`, `AsAssignment()`, ... instead of a class hierarchy. They are generated:
+Slots are read by name, checked at run time against the schema:
 
-```bash
-dotnet run --project tools/SyntaxGenerator
+```csharp
+var rule = member;                                  // a ParserRule node
+var name = rule.GetSlot("Name").Text;
+if (!rule.GetSlot("Modifier").IsAbsent) { /* entry or fragment */ }
+foreach (var element in rule.GetSlot("Definition").GetSlot("Elements").Children) { ... }
 ```
 
-`src/dialekt/Syntax/Generated/SyntaxViews.g.cs` is checked in; a test fails when it is stale.
+`GetSlot` throws with the valid slot names when the kind has no such slot; `TryGetSlot` probes. An optional part that is not
+there is an `Absent` node (`IsAbsent`), a required part the parser did not find is `IsMissing`, and a list slot is a list
+node whose `Children` are the items (separated lists alternate items and separator tokens).
 
 ## Which layer does a traversal use?
 - **Green** (handles and `GreenNodeReader`, no positions): anything that is a pure function of structure: counting,
   compaction, structural comparison, the incremental reuse analysis, folds memoized per handle. `GreenNodeReader` is a
   `ref struct`, so green recursion is plain methods, not lambdas or iterators.
-- **Typed views**: anything that needs a position, text, line/column, diagnostics, or consumes the tree as an AST. A result
+- **Red views**: anything that needs a position, text, line/column, diagnostics, or reads the tree by slot name. A result
   that must survive an edit is keyed by green handle or by name, never kept as a view.
 
 ## Adding or changing a node kind
 1. Add the kind to `SyntaxKind`.
 2. Describe its slots in `SyntaxSchema.Build` (and `IsInCategory` if it joins a category).
 3. Make the parser call `Close(mark, kind)` with the children in slot order.
-4. Run the generator. The schema conformance tests tell you if the parser and the schema disagree.
+
+The schema conformance tests tell you if the parser and the schema disagree.
 
 ## Incremental parsing
 `Parser.ReParse(newText, previousTree, textChange)` rescans the text but takes over the top-level declarations of the
