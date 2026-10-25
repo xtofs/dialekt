@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/console/console.csproj" />
+    <Project Path="src/dialekt/dialekt.csproj" />
+  </Folder>
+</Solution>
