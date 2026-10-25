@@ -4,12 +4,15 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Dialekt.Green;
 using Dialekt.Scanning;
+using Dialekt.Syntax;
 
 /// <summary>
 /// Recursive-descent parser for Langium grammar and type files. Builds a lossless green tree (every token and all
 /// whitespace/comments are in it) directly into a <see cref="GreenArena"/>.
 /// Syntax errors are recorded as diagnostics; the parser then skips to the next declaration (or, inside an
 /// interface body, the next attribute) so that later errors are still reported.
+/// Given the previous tree and the edit that produced the new text, whole top-level declarations that the edit did not
+/// touch are taken over from the previous tree instead of being parsed again.
 /// </summary>
 public sealed class Parser
 {
@@ -22,6 +25,7 @@ public sealed class Parser
     private readonly List<Token> _tokens = [];
     private readonly List<GreenNodeHandle> _tokenNodes = [];
     private readonly List<int> _tokenWidths = [];
+    private readonly List<int> _tokenFullStarts = [];
 
     // Completed nodes and consumed tokens not yet owned by a node; Close(mark, kind) turns everything after `mark` into a node.
     private readonly List<GreenNodeHandle> _children = [];
@@ -30,14 +34,27 @@ public sealed class Parser
     private readonly List<Diagnostic> _diagnostics = [];
     private int _pos;
 
-    private Parser(string content, GreenTree? previous)
+    // Declarations of the previous tree that can be reused, by their start offset in the new text.
+    private readonly Dictionary<int, ReusableDeclaration>? _reusable;
+    private int _reused;
+    private int _reparsed;
+
+    private readonly record struct ReusableDeclaration(
+        GreenNodeHandle Handle, int Width, int NewEnd, GreenNodeHandle FirstToken, GreenNodeHandle LastToken, bool EndsWithSemicolon);
+
+    private Parser(string content, SyntaxTree? previous, TextChange? change)
     {
         // Forking keeps all nodes of the previous version addressable, so identical subtrees are shared with it.
         _arena = previous is null ? new GreenArena(content.Length * 4) : previous.Arena.Fork();
         _cache = previous is null ? new GreenNodeCache(_arena) : GreenNodeCache.FromArena(_arena);
+        if (previous is not null && change is { } edit)
+        {
+            _reusable = FindReusableDeclarations(previous, edit);
+        }
 
         var trivia = new List<GreenNodeHandle>();
         var triviaWidth = 0;
+        var fullStart = 0;
         foreach (var token in Scanner.Scan(content))
         {
             if (token.Kind == Token.ErrorKind)
@@ -56,22 +73,81 @@ public sealed class Parser
             _tokens.Add(token);
             _tokenNodes.Add(_cache.GetOrAdd(TokenKind(token), width, CollectionsMarshal.AsSpan(trivia), flags));
             _tokenWidths.Add(width);
+            _tokenFullStarts.Add(fullStart);
+            fullStart += width;
             trivia.Clear();
             triviaWidth = 0;
         }
     }
 
-    public static ParseResult Parse(string content, GreenTree? previous = null)
+    /// <summary>Parses the whole text. With <paramref name="previous"/>, identical nodes are shared with that tree.</summary>
+    public static ParseResult Parse(string content, SyntaxTree? previous = null) => Parse(content, previous, null);
+
+    /// <summary>
+    /// Parses <paramref name="content"/>, the text of <paramref name="previous"/> with <paramref name="change"/> applied,
+    /// reusing the declarations of the previous tree that the change did not affect.
+    /// </summary>
+    public static ParseResult Parse(string content, SyntaxTree previous, TextChange change) => Parse(content, previous, (TextChange?)change);
+
+    private static ParseResult Parse(string content, SyntaxTree? previous, TextChange? change)
     {
-        var parser = new Parser(content, previous);
+        var parser = new Parser(content, previous, change);
         var root = parser.ParseGrammar();
         parser._arena.Seal();
-        var tree = new GreenTree(parser._arena, root);
-        if (tree.FullWidth != content.Length)
+        var tree = new SyntaxTree(new GreenTree(parser._arena, root), content);
+        return new ParseResult(tree, parser._diagnostics.OrderBy(d => d.Line).ThenBy(d => d.Column).ToList(), parser._reused, parser._reparsed);
+    }
+
+    /// <summary>
+    /// A declaration of the previous tree can be taken over when its text is unchanged and its tokens come out the same.
+    /// Here only the cheap, necessary conditions are checked (no errors, lies completely before or after the edit);
+    /// <see cref="TryReuse"/> then compares the actual tokens of the new text.
+    /// </summary>
+    private Dictionary<int, ReusableDeclaration> FindReusableDeclarations(SyntaxTree previous, TextChange change)
+    {
+        var result = new Dictionary<int, ReusableDeclaration>();
+        var root = previous.Arena.GetReader(previous.Green.RootHandle);
+        var start = 0;
+        for (var i = 0; i < root.ChildCount; i++)
         {
-            throw new UnreachableException($"The green tree covers {tree.FullWidth} of {content.Length} characters.");
+            var node = root.GetChild(i);
+            var end = start + node.FullWidth;
+            var delta = end <= change.Start ? 0 : start >= change.OldEnd ? change.Delta : int.MinValue;
+            if (delta != int.MinValue && !node.IsToken && !node.ContainsError && node.Kind != SyntaxKind.GrammarDeclaration)
+            {
+                var first = node;
+                while (!first.IsToken) first = first.GetChild(0);
+                var last = node;
+                while (!last.IsToken) last = last.GetChild(last.ChildCount - 1);
+                result[start + delta] = new ReusableDeclaration(
+                    node.Handle, node.FullWidth, end + delta, first.Handle, last.Handle, last.Kind == SyntaxKind.SemicolonToken);
+            }
+            start = end;
         }
-        return new ParseResult(tree, parser._diagnostics.OrderBy(d => d.Line).ThenBy(d => d.Column).ToList());
+        return result;
+    }
+
+    /// <summary>
+    /// If the previous tree has a declaration at the current token whose tokens are all unchanged in the new text, appends
+    /// it as is and skips its tokens. Comparing the first and last token nodes is enough: the token nodes carry their
+    /// leading trivia and width, tokens are scanned left to right from a known boundary, and the text in between is the old text.
+    /// </summary>
+    private bool TryReuse()
+    {
+        if (_reusable is null || !_reusable.TryGetValue(_tokenFullStarts[_pos], out var old)) return false;
+
+        var next = _tokenFullStarts.BinarySearch(old.NewEnd);
+        if (next <= _pos || _tokenNodes[_pos] != old.FirstToken || _tokenNodes[next - 1] != old.LastToken) return false;
+
+        // Without a closing ';' the parser looked at the following token to decide that the declaration was over
+        // (e.g. a type alias continues with '|', '[' or ';'). Only a token that starts the next declaration is safe.
+        if (!old.EndsWithSemicolon && _tokens[next].Kind is not ("Identifier" or Token.Eof)) return false;
+
+        _children.Add(old.Handle);
+        _widths.Add(old.Width);
+        _pos = next;
+        _reused++;
+        return true;
     }
 
     private static SyntaxKind TriviaKind(Token token) => token.Kind switch
@@ -169,7 +245,9 @@ public sealed class Parser
         {
             width += _widths[i];
         }
-        var handle = _cache.GetOrAdd(kind, width, CollectionsMarshal.AsSpan(_children).Slice(mark, count));
+        // Error nodes are flagged so that ContainsError tells which declarations had syntax errors (they are never reused).
+        var flags = kind == SyntaxKind.Error ? GreenNodeFlags.IsError : GreenNodeFlags.None;
+        var handle = _cache.GetOrAdd(kind, width, CollectionsMarshal.AsSpan(_children).Slice(mark, count), flags);
         _children.RemoveRange(mark, count);
         _widths.RemoveRange(mark, count);
         _children.Add(handle);
@@ -191,6 +269,9 @@ public sealed class Parser
 
         while (!AtEof)
         {
+            if (TryReuse()) continue;
+
+            _reparsed++;
             var (mark, before) = (Mark(), _pos);
             try
             {

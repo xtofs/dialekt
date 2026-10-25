@@ -37,7 +37,16 @@ internal class Program
 
             // Parsing again on top of the previous tree must share every node with it.
             var reparsed = Parser.Parse(content, result.Tree);
-            Console.WriteLine("  reparse: {0}, arena grew by {1} bytes", reparsed.Tree.RootHandle == result.Tree.RootHandle ? "same root" : "NEW root", reparsed.Tree.Arena.Length - arena.Length);
+            Console.WriteLine("  reparse: {0}, arena grew by {1} bytes", reparsed.Tree.Green.RootHandle == result.Tree.Green.RootHandle ? "same root" : "NEW root", reparsed.Tree.Arena.Length - arena.Length);
+
+            if (args.Contains("--edit"))
+            {
+                // Incremental parse after a one-character edit in the middle of the file.
+                var at = content.IndexOf('\n', content.Length / 2);
+                var edited = content.Insert(at, " ");
+                var incremental = Parser.Parse(edited, result.Tree, new TextChange(at, 0, 1));
+                Console.WriteLine("  edit at {0}: reused {1} declarations, reparsed {2}", at, incremental.ReusedDeclarations, incremental.ReparsedDeclarations);
+            }
 
             foreach (var d in result.Diagnostics)
             {
@@ -46,7 +55,7 @@ internal class Program
 
             if (showTree)
             {
-                var treeFormatter = new TreeFormatter(file, content) { ShowTrivia = showTrivia };
+                var treeFormatter = new TreeFormatter(file) { ShowTrivia = showTrivia };
                 treeFormatter.PrintTree(result.Tree);
             }
             failed |= result.Diagnostics.Count > 0;

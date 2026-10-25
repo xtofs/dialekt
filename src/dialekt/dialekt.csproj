@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Dialekt</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="dialekt.tests" />
+  </ItemGroup>
 </Project>
