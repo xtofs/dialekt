@@ -28,8 +28,7 @@ public class RedTreeTests
             var position = node.Position;
             foreach (var child in node.Children)
             {
-                // a zero-width child (absent part, empty list) cannot be told from an equal sibling, see SyntaxTree.GetParent
-                if (child.FullWidth > 0) Assert.Equal(node, child.Parent);
+                Assert.Equal(node, child.Parent);
                 Assert.Equal(position, child.Position);
                 position = child.End;
             }
@@ -91,5 +90,43 @@ public class RedTreeTests
         Assert.Equal("  /* c */ A: b=ID;", rule.FullText);
         Assert.Equal((1, 11), rule.StartLineAndColumn);
         Assert.Equal([SyntaxKind.List, SyntaxKind.Grammar], rule.Ancestors().Select(a => a.Kind));
+    }
+
+    [Fact]
+    public void Parent_of_a_navigated_node_is_exact_even_for_zero_width_children()
+    {
+        var tree = Parser.Parse("A: b=ID;\nB: c=ID;\n").Tree;
+        var rules = TestFiles.Members(tree).ToList();
+
+        foreach (var rule in rules)
+        {
+            var modifier = rule.GetSlot("Modifier");
+            Assert.True(modifier.IsAbsent);
+            Assert.Equal(rule, modifier.Parent);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Texts))]
+    public void Ancestors_match_the_path_taken_going_down(string name)
+    {
+        var tree = Parse(name);
+        foreach (var token in tree.Root.Descendants().Where(n => n.IsToken))
+        {
+            // the path down, collected by navigating from the root
+            var expected = new List<SyntaxNode>();
+            var node = tree.Root;
+            while (node != token)
+            {
+                expected.Add(node);
+                node = node.Children.First(c => c.FullWidth > 0 && c.Position <= token.Position && token.End <= c.End);
+            }
+            expected.Reverse();
+
+            Assert.Equal(expected, token.Ancestors());
+            Assert.Equal(expected[0], token.Parent);
+            // the parent was handed out without knowing its own parent; asking anyway still gives the right answer
+            if (expected.Count > 1) Assert.Equal(expected[1], token.Parent!.Value.Parent);
+        }
     }
 }

@@ -19,10 +19,12 @@ Every node kind has a **fixed slot layout** (`SyntaxSchema`, a static table in c
 whether or not it has a modifier. `Error` nodes (a declaration that could not be parsed) are free-form.
 
 ## Red layer: struct views (`src/dialekt/Syntax/`)
-`SyntaxNode` is a 16-byte `readonly struct` (tree, green handle, absolute position): no allocation, nothing cached, no
-parent pointer. Navigating just creates new views. `SyntaxTree.GetParent`/`Ancestors` re-descend from the root when a
-parent is really needed. A zero-width node (absent part, empty list) cannot be told from an equal sibling at the same
-position; for those the outermost match is returned.
+`SyntaxNode` is a small `readonly struct` (tree, green handle, absolute position, and the handle and position of its parent): no
+allocation, nothing cached. A node is only ever created by asking its parent for a child, so the parent is handed in and
+`Parent` is O(1). A struct cannot contain its parent struct, so only the immediate parent is remembered; the node returned by
+`Parent` does not know its own parent, and asking it costs a descent from the root. `Ancestors()` makes one descent for the whole
+chain. A node whose parent is not known and that has zero width (an absent part or an empty list) cannot be told from an equal
+sibling at the same position; the outermost match is returned for those.
 
 Slots are read by name, checked at run time against the schema:
 

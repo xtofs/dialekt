@@ -21,7 +21,7 @@ source text -> Scanner -> tokens -> Parser -> green tree (arena) -> red views ->
 ## Red: the same tree at a position, with names
 
 - **What it is:** a throw-away struct view (`SyntaxNode`) with position, text, line/column and slot access by name
-  (`rule.GetSlot("Name")`, checked at run time against the schema). Parents come from re-descent from the root.
+  (`rule.GetSlot("Name")`, checked at run time against the schema). The immediate parent is stored; further ancestors come from one descent from the root.
 - **Use it when the answer depends on where you are, or needs the source text:**
   - diagnostics: a range to underline
   - cursor features: `FindToken(offset)` for hover, go-to-definition, completion context

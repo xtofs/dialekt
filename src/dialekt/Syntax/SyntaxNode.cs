@@ -4,18 +4,25 @@ using System.Collections;
 using Dialekt.Green;
 
 /// <summary>
-/// Red node: a throw-away view of a green node together with its absolute position. It holds only the tree, the
-/// green handle and the position (16 bytes), allocates nothing and caches nothing; navigating just recreates views.
-/// There is no parent pointer: <see cref="Parent"/> and <see cref="Ancestors"/> re-descend from the root.
+/// Red node: a throw-away view of a green node together with its absolute position. It allocates nothing and caches
+/// nothing; navigating just recreates views. A node is only ever created by asking its parent for a child, so it is
+/// handed the handle and position of that parent, which makes <see cref="Parent"/> O(1). A struct cannot contain its
+/// parent struct (a recursive layout), so only the immediate parent is remembered, as a handle and a position;
+/// the parent returned by <see cref="Parent"/> does not know its own parent (see <see cref="Ancestors"/>).
 /// The same green node can appear at several positions (hash-consed subtrees), so identity is (handle, position).
 /// </summary>
 public readonly struct SyntaxNode : IEquatable<SyntaxNode>
 {
-    internal SyntaxNode(SyntaxTree tree, GreenNodeHandle handle, int position)
+    private readonly GreenNodeHandle _parentHandle;
+    private readonly int _parentPosition;
+
+    internal SyntaxNode(SyntaxTree tree, GreenNodeHandle handle, int position, GreenNodeHandle parentHandle = default, int parentPosition = 0)
     {
         Tree = tree;
         Handle = handle;
         Position = position;
+        _parentHandle = parentHandle;
+        _parentPosition = parentPosition;
     }
 
     public SyntaxTree Tree { get; }
@@ -40,16 +47,12 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     public int TextWidth => End - TextStart;
 
     /// <summary>Width of the whitespace and comments before the first token of this node.</summary>
-    public int LeadingTriviaWidth
-    {
-        get
-        {
-            return Green.TryGetFirstToken(out var token) ? token.LeadingTriviaWidth : 0;
-        }
-    }
+    public int LeadingTriviaWidth => Green.TryGetFirstToken(out var token) ? token.LeadingTriviaWidth : 0;
 
     /// <summary>The source text of the node without its leading trivia.</summary>
     public string Text => Tree.Source.Substring(TextStart, TextWidth);
+
+    /// <summary>The source text of the node including its leading trivia.</summary>
     public string FullText => Tree.Source.Substring(Position, FullWidth);
 
     /// <summary>1-based line and column where the node's text starts.</summary>
@@ -69,7 +72,7 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
         {
             position += green.GetChild(i).FullWidth;
         }
-        return new SyntaxNode(Tree, green.GetChildHandle(slot), position);
+        return new SyntaxNode(Tree, green.GetChildHandle(slot), position, Handle, Position);
     }
 
     /// <summary>
@@ -100,11 +103,26 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     public bool IsMissing => (Flags & GreenNodeFlags.IsMissing) != 0;
 
     /// <summary>All children; for a token these are its leading trivia.</summary>
-    public ChildList Children => new(this);
+    public ChildList Children => new ChildList(this);
 
-    /// <summary>The node that has this node as a child, or null for the root. Costs a descent from the root; see <see cref="SyntaxTree.GetParent"/>.</summary>
-    public SyntaxNode? Parent => Tree.GetParent(this);
+    /// <summary>True for the root of the tree.</summary>
+    public bool IsRoot => Handle == Tree.Green.RootHandle;
 
+    /// <summary>
+    /// The node that has this node as a child, or null for the root. O(1) for a node that was reached by navigating down from
+    /// its parent. The node returned does not know its own parent: asking it for <c>Parent</c> costs a descent from the root
+    /// (<see cref="SyntaxTree.GetParent"/>); use <see cref="Ancestors"/> to walk all the way up.
+    /// </summary>
+    public SyntaxNode? Parent
+    {
+        get
+        {
+            if (IsRoot) return null;
+            return _parentHandle.IsNull ? Tree.GetParent(this) : new SyntaxNode(Tree, _parentHandle, _parentPosition);
+        }
+    }
+
+    /// <summary>The parent, grandparent, ... up to the root. One descent from the root, however many levels there are.</summary>
     public IEnumerable<SyntaxNode> Ancestors() => Tree.Ancestors(this);
 
     /// <summary>Pre-order traversal of this node and everything below it (trivia included).</summary>
@@ -190,7 +208,7 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
                 {
                     return false;
                 }
-                Current = new SyntaxNode(parent.Tree, green.GetChildHandle(_index), _position);
+                Current = new SyntaxNode(parent.Tree, green.GetChildHandle(_index), _position, parent.Handle, parent.Position);
                 return true;
             }
 
