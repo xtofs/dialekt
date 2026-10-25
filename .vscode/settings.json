@@ -2,6 +2,7 @@
     "dotnet.defaultSolution": "tonto.slnx",
     "cSpell.words": [
         "Dialekt",
-        "langium"
+        "langium",
+        "reparsed"
     ]
 }

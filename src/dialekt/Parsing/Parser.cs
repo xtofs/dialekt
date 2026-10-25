@@ -38,7 +38,7 @@ public sealed class Parser
 
         var trivia = new List<GreenNodeHandle>();
         var triviaWidth = 0;
-        foreach (var token in new Scanner().Scan(content))
+        foreach (var token in Scanner.Scan(content))
         {
             if (token.Kind == Token.ErrorKind)
             {
@@ -89,7 +89,7 @@ public sealed class Parser
         "RegexLiteral" => SyntaxKind.RegexLiteralToken,
         Token.ErrorKind => SyntaxKind.ErrorToken,
         Token.Eof => SyntaxKind.EndOfFileToken,
-        _ => SyntaxFacts.SymbolKinds[token.Text],
+        _ => SyntaxFacts.TryGetSymbolKind(token.Text, out var kind) ? kind : throw new UnreachableException($"Unknown symbol '{token.Text}'."),
     };
 
     // ---------------------------------------------------------------- token helpers

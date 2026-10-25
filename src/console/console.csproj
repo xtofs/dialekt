@@ -5,6 +5,8 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Precompiles on `dotnet publish -r <rid>`; avoids most JIT time in short-lived runs. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
 <ItemGroup>

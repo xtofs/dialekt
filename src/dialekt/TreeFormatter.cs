@@ -6,7 +6,7 @@ using Dialekt.Green;
 /// Prints a green tree. The green nodes carry no positions, so the formatter derives each node's absolute offset
 /// while walking down and maps it to line/column with a table of line starts.
 /// </summary>
-public class TreeFormatter
+public class TreeFormatter(string fileName, string source)
 {
     // Constants for drawing lines and spaces
     private const string _cross = " ├─";
@@ -14,15 +14,22 @@ public class TreeFormatter
     private const string _vertical = " │ ";
     private const string _space = "   ";
 
-    private readonly string _fileName;
-    private readonly string _source;
-    private readonly int[] _lineStarts;
+    private readonly string _fileName = fileName;
+    private readonly string _source = source;
+    private readonly int[] _lineStarts = BuildLineStarts(source);
 
-    public TreeFormatter(string fileName, string source)
+    private static int[] BuildLineStarts(string source)
     {
-        _fileName = fileName;
-        _source = source;
-        _lineStarts = [0, .. source.Select((c, i) => (c, i)).Where(x => x.c == '\n').Select(x => x.i + 1)];
+        // return [0, .. source.Select((c, i) => (c, i)).Where(x => x.c == '\n').Select(x => x.i + 1)];
+        var lineStarts = new List<int> { 0 };
+        for (var i = 0; i < source.Length; i++)
+        {
+            if (source[i] == '\n')
+            {
+                lineStarts.Add(i + 1);
+            }
+        }
+        return [.. lineStarts];
     }
 
     public bool ShowTrivia { get; init; }
