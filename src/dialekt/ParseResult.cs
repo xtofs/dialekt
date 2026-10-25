@@ -1,3 +1,5 @@
-namespace Dialekt; 
+namespace Dialekt;
 
-public sealed record ParseResult(Node Root, IReadOnlyList<Diagnostic> Diagnostics);
+using Dialekt.Green;
+
+public sealed record ParseResult(GreenTree Tree, IReadOnlyList<Diagnostic> Diagnostics);

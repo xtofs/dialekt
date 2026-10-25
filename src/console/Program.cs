@@ -1,8 +1,8 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Dialekt;
 using Dialekt.Scanning;
 
-// Usage: dotnet run --project src/console -- [--tree] [file...]
+// Usage: dotnet run --project src/console -- [--tree [--trivia]] [file...]
 // Without files, parses langium-grammar.langium and langium-types.langium from the repository root.
 var showTree = args.Contains("--tree");
 var files = args.Where(a => !a.StartsWith("--")).ToList();
@@ -17,24 +17,22 @@ foreach (var file in files)
     var result = Parser.Parse(content);
     sw.Stop();
 
-    var nodeCount = result.Root.Descendants().Count() + 1;
-    Console.WriteLine("{0}: {1} nodes, {2} diagnostics, {3} ms", file, nodeCount, result.Diagnostics.Count, sw.ElapsedMilliseconds);
+    var arena = result.Tree.Arena;
+    Console.WriteLine("{0}: {1} nodes ({2} unique, {3} bytes), {4} diagnostics, {5} ms", file, result.Tree.CountNodes(), arena.NodeCount, arena.Length, result.Diagnostics.Count, sw.ElapsedMilliseconds);
+
+    // Parsing again on top of the previous tree must share every node with it.
+    var reparsed = Parser.Parse(content, result.Tree);
+    Console.WriteLine("  reparse: {0}, arena grew by {1} bytes", reparsed.Tree.RootHandle == result.Tree.RootHandle ? "same root" : "NEW root", reparsed.Tree.Arena.Length - arena.Length);
 
     foreach (var d in result.Diagnostics)
     {
         Console.WriteLine("  {0}{1}", Path.GetFileName(file), d);
     }
 
-    // // print all kinds of nodes in the syntax tree
-    // var kinds = new HashSet<string>();
-    // result.Root.Traverse(n => kinds.Add(n.Kind));
-    // Console.WriteLine(string.Join(", ", kinds));
-
     if (showTree)
     {
-        // Console.Write(result.Root.Dump());
-        var treeFormatter = new TreeFormatter(file);
-        treeFormatter.PrintTree(result.Root);
+        var treeFormatter = new TreeFormatter(file, content) { ShowTrivia = args.Contains("--trivia") };
+        treeFormatter.PrintTree(result.Tree);
     }
     failed |= result.Diagnostics.Count > 0;
 }

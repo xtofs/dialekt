@@ -1,0 +1,127 @@
+namespace Dialekt.Green;
+
+/// <summary>
+/// Scalar tag that distinguishes every kind of green node. The green layer itself is untyped: a node is only
+/// its kind, its width and its positional child slots.
+/// </summary>
+public enum SyntaxKind : ushort
+{
+    None = 0,
+
+    // ---- trivia (leaf nodes, attached to the following token)
+    WhitespaceTrivia,
+    SingleLineCommentTrivia,
+    MultiLineCommentTrivia,
+
+    // ---- tokens (children are the token's leading trivia; the token text is the rest of the width)
+    IdentifierToken,
+    StringLiteralToken,
+    NumberToken,
+    RegexLiteralToken,
+    ErrorToken,
+    EndOfFileToken,
+
+    ColonToken,
+    BarToken,
+    GreaterThanToken,
+    EqualsToken,
+    LessThanToken,
+    AmpersandToken,
+    DotToken,
+    DotDotToken,
+    CommaToken,
+    EqualsGreaterThanToken,
+    PlusToken,
+    StarToken,
+    QuestionLessThanEqualsToken,
+    QuestionLessThanBangToken,
+    QuestionToken,
+    QuestionBangToken,
+    MinusGreaterThanToken,
+    OpenParenToken,
+    CloseParenToken,
+    OpenBraceToken,
+    CloseBraceToken,
+    OpenBracketToken,
+    CloseBracketToken,
+    SemicolonToken,
+    BangToken,
+    AtToken,
+    PlusEqualsToken,
+    QuestionEqualsToken,
+
+    // ---- file level
+    Grammar,
+    GrammarDeclaration,
+    Import,
+    Error,
+
+    // ---- types
+    Interface,
+    SuperType,
+    Attribute,
+    Optional,
+    TypeAlias,
+    UnionType,
+    ArrayType,
+    ReferenceType,
+    Multi,
+    SimpleType,
+    StringType,
+    Parenthesized,
+    StringLiteral,
+    NumberLiteral,
+    BooleanLiteral,
+    ArrayLiteral,
+
+    // ---- rules
+    ParserRule,
+    InfixRule,
+    TerminalRule,
+    Modifier,
+    ParameterList,
+    Parameter,
+    ReturnType,
+    InferredType,
+    InfixRuleOperators,
+    InfixRuleOperatorList,
+    Associativity,
+
+    // ---- parser rule bodies
+    Alternatives,
+    ConditionalBranch,
+    Guard,
+    UnorderedGroup,
+    Group,
+    Cardinality,
+    Action,
+    Feature,
+    Operator,
+    Assignment,
+    Predicate,
+    PredicatedKeyword,
+    PredicatedRuleCall,
+    PredicatedGroup,
+    CrossReference,
+    Separator,
+    EndOfFile,
+    Keyword,
+    RuleCall,
+    ArgumentList,
+    NamedArgument,
+    Disjunction,
+    Conjunction,
+    Negation,
+    ParameterReference,
+
+    // ---- terminal rule bodies
+    TerminalAlternatives,
+    TerminalGroup,
+    CharacterRange,
+    TerminalRuleCall,
+    RegexToken,
+    Wildcard,
+    NegatedToken,
+    UntilToken,
+    Lookahead,
+}

@@ -1,9 +1,13 @@
 namespace Dialekt;
 
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Dialekt.Green;
 using Dialekt.Scanning;
 
 /// <summary>
-/// Recursive-descent parser for Langium grammar and type files. Produces a generic <see cref="Node"/> tree.
+/// Recursive-descent parser for Langium grammar and type files. Builds a lossless green tree (every token and all
+/// whitespace/comments are in it) directly into a <see cref="GreenArena"/>.
 /// Syntax errors are recorded as diagnostics; the parser then skips to the next declaration (or, inside an
 /// interface body, the next attribute) so that later errors are still reported.
 /// </summary>
@@ -11,31 +15,114 @@ public sealed class Parser
 {
     private sealed class ParseException : Exception;
 
+    private readonly GreenArena _arena;
+    private readonly GreenNodeCache _cache;
+
+    // One entry per non-trivia token: the scanner token and its green node (leading trivia + text).
     private readonly List<Token> _tokens = [];
+    private readonly List<GreenNodeHandle> _tokenNodes = [];
+    private readonly List<int> _tokenWidths = [];
+
+    // Completed nodes and consumed tokens not yet owned by a node; Close(mark, kind) turns everything after `mark` into a node.
+    private readonly List<GreenNodeHandle> _children = [];
+    private readonly List<int> _widths = [];
+
     private readonly List<Diagnostic> _diagnostics = [];
     private int _pos;
 
-    private Parser(string content)
+    private Parser(string content, GreenTree? previous)
     {
+        // Forking keeps all nodes of the previous version addressable, so identical subtrees are shared with it.
+        _arena = previous is null ? new GreenArena(content.Length * 4) : previous.Arena.Fork();
+        _cache = previous is null ? new GreenNodeCache(_arena) : GreenNodeCache.FromArena(_arena);
+
+        var trivia = new List<GreenNodeHandle>();
+        var triviaWidth = 0;
         foreach (var token in new Scanner().Scan(content))
         {
             if (token.Kind == Token.ErrorKind)
             {
                 _diagnostics.Add(new Diagnostic(token.Error!, token.Span.Start.Line, token.Span.Start.Column, token.Text.Length, true));
             }
-            if (!token.IsTrivia)
+            if (token.IsTrivia)
             {
-                _tokens.Add(token);
+                trivia.Add(_cache.GetOrAdd(TriviaKind(token), token.Text.Length, [], GreenNodeFlags.IsTrivia));
+                triviaWidth += token.Text.Length;
+                continue;
             }
+
+            var flags = GreenNodeFlags.IsToken | (token.Kind == Token.ErrorKind ? GreenNodeFlags.IsError : GreenNodeFlags.None);
+            var width = triviaWidth + token.Text.Length;
+            _tokens.Add(token);
+            _tokenNodes.Add(_cache.GetOrAdd(TokenKind(token), width, CollectionsMarshal.AsSpan(trivia), flags));
+            _tokenWidths.Add(width);
+            trivia.Clear();
+            triviaWidth = 0;
         }
     }
 
-    public static ParseResult Parse(string content)
+    public static ParseResult Parse(string content, GreenTree? previous = null)
     {
-        var parser = new Parser(content);
+        var parser = new Parser(content, previous);
         var root = parser.ParseGrammar();
-        return new ParseResult(root, parser._diagnostics.OrderBy(d => d.Line).ThenBy(d => d.Column).ToList());
+        parser._arena.Seal();
+        var tree = new GreenTree(parser._arena, root);
+        if (tree.FullWidth != content.Length)
+        {
+            throw new UnreachableException($"The green tree covers {tree.FullWidth} of {content.Length} characters.");
+        }
+        return new ParseResult(tree, parser._diagnostics.OrderBy(d => d.Line).ThenBy(d => d.Column).ToList());
     }
+
+    private static SyntaxKind TriviaKind(Token token) => token.Kind switch
+    {
+        "Whitespace" => SyntaxKind.WhitespaceTrivia,
+        "SingleLineComment" => SyntaxKind.SingleLineCommentTrivia,
+        _ => SyntaxKind.MultiLineCommentTrivia,
+    };
+
+    private static SyntaxKind TokenKind(Token token) => token.Kind switch
+    {
+        "Identifier" => SyntaxKind.IdentifierToken,
+        "StringLiteral" => SyntaxKind.StringLiteralToken,
+        "Number" => SyntaxKind.NumberToken,
+        "RegexLiteral" => SyntaxKind.RegexLiteralToken,
+        Token.ErrorKind => SyntaxKind.ErrorToken,
+        Token.Eof => SyntaxKind.EndOfFileToken,
+        _ => SymbolKinds[token.Text],
+    };
+
+    private static readonly Dictionary<string, SyntaxKind> SymbolKinds = new()
+    {
+        [":"] = SyntaxKind.ColonToken,
+        ["|"] = SyntaxKind.BarToken,
+        [">"] = SyntaxKind.GreaterThanToken,
+        ["="] = SyntaxKind.EqualsToken,
+        ["<"] = SyntaxKind.LessThanToken,
+        ["&"] = SyntaxKind.AmpersandToken,
+        ["."] = SyntaxKind.DotToken,
+        [".."] = SyntaxKind.DotDotToken,
+        [","] = SyntaxKind.CommaToken,
+        ["=>"] = SyntaxKind.EqualsGreaterThanToken,
+        ["+"] = SyntaxKind.PlusToken,
+        ["*"] = SyntaxKind.StarToken,
+        ["?<="] = SyntaxKind.QuestionLessThanEqualsToken,
+        ["?<!"] = SyntaxKind.QuestionLessThanBangToken,
+        ["?"] = SyntaxKind.QuestionToken,
+        ["?!"] = SyntaxKind.QuestionBangToken,
+        ["->"] = SyntaxKind.MinusGreaterThanToken,
+        ["("] = SyntaxKind.OpenParenToken,
+        [")"] = SyntaxKind.CloseParenToken,
+        ["{"] = SyntaxKind.OpenBraceToken,
+        ["}"] = SyntaxKind.CloseBraceToken,
+        ["["] = SyntaxKind.OpenBracketToken,
+        ["]"] = SyntaxKind.CloseBracketToken,
+        [";"] = SyntaxKind.SemicolonToken,
+        ["!"] = SyntaxKind.BangToken,
+        ["@"] = SyntaxKind.AtToken,
+        ["+="] = SyntaxKind.PlusEqualsToken,
+        ["?="] = SyntaxKind.QuestionEqualsToken,
+    };
 
     // ---------------------------------------------------------------- token helpers
 
@@ -50,11 +137,14 @@ public sealed class Parser
     private bool IsIdent(int n = 0) => Peek(n).Kind == "Identifier";
     private bool IsString(int n = 0) => Peek(n).Kind == "StringLiteral";
 
+    /// <summary>Consumes the current token (never the end of file) and hands its green node to the enclosing node.</summary>
     private Token Advance()
     {
         var t = Cur;
         if (!AtEof)
         {
+            _children.Add(_tokenNodes[_pos]);
+            _widths.Add(_tokenWidths[_pos]);
             _pos++;
         }
         return t;
@@ -97,75 +187,78 @@ public sealed class Parser
 
     private static string Shorten(string text) => text.Length > 20 ? text[..20] + "…" : text;
 
-    private Node Begin(string kind, string? name = null, Token? at = null) => new(kind, (at ?? Cur).Span with { End = (at ?? Cur).Span.Start }, name);
+    // ---------------------------------------------------------------- node construction
 
-    private Node Finish(Node node)
+    /// <summary>Position in the child list; everything added after it can later be closed into a node.</summary>
+    private int Mark() => _children.Count;
+
+    /// <summary>Makes all children added since <paramref name="mark"/> the children of a new node of the given kind.</summary>
+    private void Close(int mark, SyntaxKind kind)
     {
-        var end = _pos > 0 ? _tokens[_pos - 1].Span.End : node.Span.Start;
-        node.Span = node.Span with { End = end.Offset < node.Span.Start.Offset ? node.Span.Start : end };
-        return node;
+        var count = _children.Count - mark;
+        var width = 0;
+        for (var i = mark; i < _widths.Count; i++)
+        {
+            width += _widths[i];
+        }
+        var handle = _cache.GetOrAdd(kind, width, CollectionsMarshal.AsSpan(_children).Slice(mark, count));
+        _children.RemoveRange(mark, count);
+        _widths.RemoveRange(mark, count);
+        _children.Add(handle);
+        _widths.Add(width);
     }
-
-    private static Node Leaf(string kind, Token token, string? name = null) => new(kind, token.Span, name ?? token.Text);
 
     // ---------------------------------------------------------------- file level
 
-    private Node ParseGrammar()
+    private GreenNodeHandle ParseGrammar()
     {
-        var root = Begin("Grammar");
-        try
+        var root = Mark();
+        if (IsKw("grammar") && IsIdent(1))
         {
-            if (IsKw("grammar") && IsIdent(1))
-            {
-                var decl = Begin("GrammarDeclaration");
-                Advance();
-                decl.Name = Advance().Text;
-                root.Add(Finish(decl));
-            }
+            var m = Mark();
+            Advance();
+            Advance();
+            Close(m, SyntaxKind.GrammarDeclaration);
         }
-        catch (ParseException) { }
 
         while (!AtEof)
         {
-            var before = _pos;
+            var (mark, before) = (Mark(), _pos);
             try
             {
-                root.Add(ParseDeclaration());
+                ParseDeclaration();
             }
             catch (ParseException)
             {
-                root.Add(Recover(before));
+                Recover(mark, before);
             }
         }
-        if (root.Children.Count > 0)
-        {
-            Finish(root);
-        }
-        else
-        {
-            root.Span = root.Span with { End = Cur.Span.End };
-        }
-        return root;
+
+        // The end-of-file token carries the trailing whitespace and comments.
+        _children.Add(_tokenNodes[_pos]);
+        _widths.Add(_tokenWidths[_pos]);
+        Close(root, SyntaxKind.Grammar);
+        return _children[0];
     }
 
-    private Node ParseDeclaration()
+    private void ParseDeclaration()
     {
-        if (IsKw("import")) return ParseImport();
-        if (IsKw("interface")) return ParseInterface();
-        if (IsKw("type") && IsIdent(1)) return ParseTypeAlias();
-        if (IsKw("infix") && IsIdent(1)) return ParseInfixRule();
-        if (IsKw("terminal") || (IsKw("hidden") && IsKw("terminal", 1))) return ParseTerminalRule();
-        if (IsKw("entry") || IsKw("fragment") || IsIdent()) return ParseParserRule();
-        throw Fail("a rule, interface, type or import");
+        if (IsKw("import")) ParseImport();
+        else if (IsKw("interface")) ParseInterface();
+        else if (IsKw("type") && IsIdent(1)) ParseTypeAlias();
+        else if (IsKw("infix") && IsIdent(1)) ParseInfixRule();
+        else if (IsKw("terminal") || (IsKw("hidden") && IsKw("terminal", 1))) ParseTerminalRule();
+        else if (IsKw("entry") || IsKw("fragment") || IsIdent()) ParseParserRule();
+        else throw Fail("a rule, interface, type or import");
     }
 
     /// <summary>
     /// Skips to the end of the broken declaration: past the next top-level ';', or up to a token in column 1
-    /// (where the next declaration most likely starts). Always makes progress.
+    /// (where the next declaration most likely starts). Always makes progress. Everything consumed since
+    /// <paramref name="mark"/>, including what the failed parse had already consumed, ends up in one Error node.
     /// </summary>
-    private Node Recover(int before)
+    private void Recover(int mark, int before)
     {
-        var error = Begin("Error", at: _tokens[before]);
         if (_pos == before && !AtEof)
         {
             Advance();
@@ -185,58 +278,58 @@ public sealed class Parser
                 {
                     case "(" or "[" or "{": depth++; break;
                     case ")" or "]" or "}": depth--; break;
-                    case ";" when depth <= 0: return Finish(error);
+                    case ";" when depth <= 0: Close(mark, SyntaxKind.Error); return;
                 }
             }
         }
-        return Finish(error);
+        Close(mark, SyntaxKind.Error);
     }
 
-    private Node ParseImport()
+    private void ParseImport()
     {
-        var node = Begin("Import");
+        var m = Mark();
         Advance();
-        node.Name = ExpectString("an import path").Text;
+        ExpectString("an import path");
         Accept(";");
-        return Finish(node);
+        Close(m, SyntaxKind.Import);
     }
 
     // ---------------------------------------------------------------- types
 
-    private Node ParseInterface()
+    private void ParseInterface()
     {
-        var node = Begin("Interface");
+        var m = Mark();
         Advance();
-        node.Name = ExpectIdent("an interface name").Text;
+        ExpectIdent("an interface name");
         if (AcceptKw("extends"))
         {
             do
             {
-                var t = ExpectIdent("a super type name");
-                node.Add(Leaf("SuperType", t));
+                var s = Mark();
+                ExpectIdent("a super type name");
+                Close(s, SyntaxKind.SuperType);
             } while (Accept(","));
         }
         ExpectSym("{");
         while (!IsSym("}") && !AtEof)
         {
-            var before = _pos;
+            var (mark, before) = (Mark(), _pos);
             try
             {
-                node.Add(ParseTypeAttribute());
+                ParseTypeAttribute();
             }
             catch (ParseException)
             {
-                node.Add(RecoverAttribute(before));
+                RecoverAttribute(mark, before);
             }
         }
         ExpectSym("}");
         Accept(";");
-        return Finish(node);
+        Close(m, SyntaxKind.Interface);
     }
 
-    private Node RecoverAttribute(int before)
+    private void RecoverAttribute(int mark, int before)
     {
-        var error = Begin("Error", at: _tokens[before]);
         if (_pos == before && !AtEof && !IsSym("}"))
         {
             Advance();
@@ -248,286 +341,328 @@ public sealed class Parser
                 break;
             }
         }
-        return Finish(error);
+        Close(mark, SyntaxKind.Error);
     }
 
-    private Node ParseTypeAttribute()
+    private void ParseTypeAttribute()
     {
-        var node = Begin("Attribute");
-        node.Name = ExpectIdent("an attribute name").Text;
+        var m = Mark();
+        ExpectIdent("an attribute name");
         if (IsSym("?"))
         {
-            node.Add(Leaf("Optional", Advance()));
+            var o = Mark();
+            Advance();
+            Close(o, SyntaxKind.Optional);
         }
         ExpectSym(":");
-        node.Add(ParseTypeDefinition());
+        ParseTypeDefinition();
         if (Accept("="))
         {
-            node.Add(ParseValueLiteral());
+            ParseValueLiteral();
         }
         Accept(";");
-        return Finish(node);
+        Close(m, SyntaxKind.Attribute);
     }
 
-    private Node ParseValueLiteral()
+    private void ParseValueLiteral()
     {
-        var node = Begin("ValueLiteral");
+        var m = Mark();
         if (IsString())
         {
-            return Leaf("StringLiteral", Advance());
+            Advance();
+            Close(m, SyntaxKind.StringLiteral);
         }
-        if (Cur.Kind == "Number")
+        else if (Cur.Kind == "Number")
         {
-            return Leaf("NumberLiteral", Advance());
+            Advance();
+            Close(m, SyntaxKind.NumberLiteral);
         }
-        if (IsKw("true") || IsKw("false"))
+        else if (IsKw("true") || IsKw("false"))
         {
-            return Leaf("BooleanLiteral", Advance());
+            Advance();
+            Close(m, SyntaxKind.BooleanLiteral);
         }
-        if (IsSym("["))
+        else if (IsSym("["))
         {
-            node = Begin("ArrayLiteral");
             Advance();
             if (!IsSym("]"))
             {
                 do
                 {
-                    node.Add(ParseValueLiteral());
+                    ParseValueLiteral();
                 } while (Accept(","));
             }
             ExpectSym("]");
-            return Finish(node);
+            Close(m, SyntaxKind.ArrayLiteral);
         }
-        throw Fail("a value (string, number, boolean or array)");
+        else
+        {
+            throw Fail("a value (string, number, boolean or array)");
+        }
     }
 
-    private Node ParseTypeAlias()
+    private void ParseTypeAlias()
     {
-        var node = Begin("Type");
+        var m = Mark();
         Advance();
-        node.Name = ExpectIdent("a type name").Text;
+        ExpectIdent("a type name");
         ExpectSym("=");
-        node.Add(ParseTypeDefinition());
+        ParseTypeDefinition();
         Accept(";");
-        return Finish(node);
+        Close(m, SyntaxKind.TypeAlias);
     }
 
     // union < array < reference/simple
-    private Node ParseTypeDefinition()
+    private void ParseTypeDefinition()
     {
-        var start = Cur;
-        var first = ParseArrayType();
-        if (!IsSym("|")) return first;
-        var union = Begin("UnionType", at: start).Add(first);
+        var m = Mark();
+        ParseArrayType();
+        if (!IsSym("|")) return;
         while (Accept("|"))
         {
-            union.Add(ParseArrayType());
+            ParseArrayType();
         }
-        return Finish(union);
+        Close(m, SyntaxKind.UnionType);
     }
 
-    private Node ParseArrayType()
+    private void ParseArrayType()
     {
-        var start = Cur;
-        var type = ParseReferenceType();
+        var m = Mark();
+        ParseReferenceType();
         while (IsSym("[") && IsSym("]", 1))
         {
-            var array = Begin("ArrayType", at: start).Add(type);
             Advance();
             Advance();
-            type = Finish(array);
+            Close(m, SyntaxKind.ArrayType);
         }
-        return type;
     }
 
-    private Node ParseReferenceType()
+    private void ParseReferenceType()
     {
-        if (!IsSym("@")) return ParseSimpleType();
-        var node = Begin("ReferenceType");
+        if (!IsSym("@"))
+        {
+            ParseSimpleType();
+            return;
+        }
+        var m = Mark();
         Advance();
-        node.Add(ParseSimpleType());
+        ParseSimpleType();
         if (IsSym("+"))
         {
-            node.Add(Leaf("Multi", Advance()));
+            var multi = Mark();
+            Advance();
+            Close(multi, SyntaxKind.Multi);
         }
-        return Finish(node);
+        Close(m, SyntaxKind.ReferenceType);
     }
 
-    private Node ParseSimpleType()
+    private void ParseSimpleType()
     {
+        var m = Mark();
         if (IsSym("("))
         {
-            var node = Begin("Parenthesized");
             Advance();
-            node.Add(ParseTypeDefinition());
+            ParseTypeDefinition();
             ExpectSym(")");
-            return Finish(node);
+            Close(m, SyntaxKind.Parenthesized);
         }
-        if (IsIdent()) return Leaf("SimpleType", Advance());
-        if (IsString()) return Leaf("StringType", Advance());
-        throw Fail("a type");
+        else if (IsIdent())
+        {
+            Advance();
+            Close(m, SyntaxKind.SimpleType);
+        }
+        else if (IsString())
+        {
+            Advance();
+            Close(m, SyntaxKind.StringType);
+        }
+        else
+        {
+            throw Fail("a type");
+        }
     }
 
     // ---------------------------------------------------------------- rules
 
-    private Node ParseParserRule()
+    private void ParseParserRule()
     {
-        var node = Begin("ParserRule");
+        var m = Mark();
         if (IsKw("entry") || (IsKw("fragment") && IsIdent(1)))
         {
-            node.Add(Leaf("Modifier", Advance()));
+            var modifier = Mark();
+            Advance();
+            Close(modifier, SyntaxKind.Modifier);
         }
-        node.Name = ExpectIdent("a rule name").Text;
-        ParseParameters(node);
-        ParseReturnsOrInfers(node);
+        ExpectIdent("a rule name");
+        ParseParameters();
+        ParseReturnsOrInfers();
         ExpectSym(":");
-        node.Add(ParseAlternatives());
+        ParseAlternatives();
         ExpectSym(";");
-        return Finish(node);
+        Close(m, SyntaxKind.ParserRule);
     }
 
-    private Node ParseInfixRule()
+    private void ParseInfixRule()
     {
-        var node = Begin("InfixRule");
+        var m = Mark();
         Advance();
-        node.Name = ExpectIdent("a rule name").Text;
-        ParseParameters(node);
+        ExpectIdent("a rule name");
+        ParseParameters();
         ExpectKw("on");
-        node.Add(ParseRuleCall());
-        ParseReturnsOrInfers(node);
+        ParseRuleCall();
+        ParseReturnsOrInfers();
         ExpectSym(":");
 
-        var operators = Begin("InfixRuleOperators");
+        var operators = Mark();
         do
         {
-            var list = Begin("InfixRuleOperatorList");
+            var list = Mark();
             if (IsKw("left") || IsKw("right"))
             {
-                list.Add(Leaf("Associativity", Advance()));
+                var assoc = Mark();
+                Advance();
                 ExpectKw("assoc");
+                Close(assoc, SyntaxKind.Associativity);
             }
             do
             {
-                list.Add(ParseKeyword());
+                ParseKeyword();
             } while (Accept("|"));
-            operators.Add(Finish(list));
+            Close(list, SyntaxKind.InfixRuleOperatorList);
         } while (Accept(">"));
-        node.Add(Finish(operators));
+        Close(operators, SyntaxKind.InfixRuleOperators);
 
         ExpectSym(";");
-        return Finish(node);
+        Close(m, SyntaxKind.InfixRule);
     }
 
-    private void ParseParameters(Node rule)
+    private void ParseParameters()
     {
-        if (!Accept("<")) return;
+        if (!IsSym("<")) return;
+        var m = Mark();
+        Advance();
         if (!IsSym(">"))
         {
             do
             {
-                rule.Add(Leaf("Parameter", ExpectIdent("a parameter name")));
+                var p = Mark();
+                ExpectIdent("a parameter name");
+                Close(p, SyntaxKind.Parameter);
             } while (Accept(","));
         }
         ExpectSym(">");
+        Close(m, SyntaxKind.ParameterList);
     }
 
-    private void ParseReturnsOrInfers(Node rule)
+    private void ParseReturnsOrInfers()
     {
         if (IsKw("returns"))
         {
+            var m = Mark();
             Advance();
-            rule.Add(Leaf("ReturnType", ExpectIdent("a return type")));
+            ExpectIdent("a return type");
+            Close(m, SyntaxKind.ReturnType);
         }
         else if (IsKw("infers"))
         {
+            var m = Mark();
             Advance();
-            rule.Add(Leaf("InferredType", ExpectIdent("a type name")));
+            ExpectIdent("a type name");
+            Close(m, SyntaxKind.InferredType);
         }
     }
 
-    private Node ParseTerminalRule()
+    private void ParseTerminalRule()
     {
-        var node = Begin("TerminalRule");
+        var m = Mark();
         if (IsKw("hidden"))
         {
-            node.Add(Leaf("Modifier", Advance()));
+            var modifier = Mark();
+            Advance();
+            Close(modifier, SyntaxKind.Modifier);
         }
         ExpectKw("terminal");
         if (IsKw("fragment"))
         {
-            node.Add(Leaf("Modifier", Advance()));
-            node.Name = ExpectIdent("a rule name").Text;
+            var modifier = Mark();
+            Advance();
+            Close(modifier, SyntaxKind.Modifier);
+            ExpectIdent("a rule name");
         }
         else
         {
-            node.Name = ExpectIdent("a rule name").Text;
-            if (AcceptKw("returns"))
+            ExpectIdent("a rule name");
+            if (IsKw("returns"))
             {
-                node.Add(Leaf("ReturnType", ExpectIdent("a return type")));
+                var r = Mark();
+                Advance();
+                ExpectIdent("a return type");
+                Close(r, SyntaxKind.ReturnType);
             }
         }
         ExpectSym(":");
-        node.Add(ParseTerminalAlternatives());
+        ParseTerminalAlternatives();
         ExpectSym(";");
-        return Finish(node);
+        Close(m, SyntaxKind.TerminalRule);
     }
 
     // ---------------------------------------------------------------- parser rule bodies
     // Precedence (loosest to tightest): alternatives '|' < unordered group '&' < group (juxtaposition) < cardinality
 
-    private Node ParseAlternatives()
+    private void ParseAlternatives()
     {
-        var start = Cur;
-        var first = ParseConditionalBranch();
-        if (!IsSym("|")) return first;
-        var node = Begin("Alternatives", at: start).Add(first);
+        var m = Mark();
+        ParseConditionalBranch();
+        if (!IsSym("|")) return;
         while (Accept("|"))
         {
-            node.Add(ParseConditionalBranch());
+            ParseConditionalBranch();
         }
-        return Finish(node);
+        Close(m, SyntaxKind.Alternatives);
     }
 
-    private Node ParseConditionalBranch()
+    private void ParseConditionalBranch()
     {
-        if (!IsSym("<")) return ParseUnorderedGroup();
-        var node = Begin("ConditionalBranch");
+        if (!IsSym("<"))
+        {
+            ParseUnorderedGroup();
+            return;
+        }
+        var m = Mark();
+        var guard = Mark();
         Advance();
-        var guard = Begin("Guard");
-        guard.Add(ParseDisjunction());
-        node.Add(Finish(guard));
+        ParseDisjunction();
         ExpectSym(">");
+        Close(guard, SyntaxKind.Guard);
         do
         {
-            node.Add(ParseAbstractToken());
+            ParseAbstractToken();
         } while (IsAbstractTokenStart());
-        return Finish(node);
+        Close(m, SyntaxKind.ConditionalBranch);
     }
 
-    private Node ParseUnorderedGroup()
+    private void ParseUnorderedGroup()
     {
-        var start = Cur;
-        var first = ParseGroup();
-        if (!IsSym("&")) return first;
-        var node = Begin("UnorderedGroup", at: start).Add(first);
+        var m = Mark();
+        ParseGroup();
+        if (!IsSym("&")) return;
         while (Accept("&"))
         {
-            node.Add(ParseGroup());
+            ParseGroup();
         }
-        return Finish(node);
+        Close(m, SyntaxKind.UnorderedGroup);
     }
 
-    private Node ParseGroup()
+    private void ParseGroup()
     {
-        var start = Cur;
-        var first = ParseAbstractToken();
-        if (!IsAbstractTokenStart()) return first;
-        var node = Begin("Group", at: start).Add(first);
+        var m = Mark();
+        ParseAbstractToken();
+        if (!IsAbstractTokenStart()) return;
         while (IsAbstractTokenStart())
         {
-            node.Add(ParseAbstractToken());
+            ParseAbstractToken();
         }
-        return Finish(node);
+        Close(m, SyntaxKind.Group);
     }
 
     private bool IsAbstractTokenStart() =>
@@ -535,301 +670,385 @@ public sealed class Parser
 
     private static bool IsAssignmentOperator(Token t) => t.IsSymbol && t.Text is "=" or "+=" or "?=";
 
-    private Node ParseAbstractToken()
+    private void ParseAbstractToken()
     {
-        if (IsSym("{")) return ParseAction();
+        if (IsSym("{"))
+        {
+            ParseAction();
+            return;
+        }
 
-        var start = Cur;
-        Node element;
-        var hasPredicate = IsSym("=>") || IsSym("->");
-        var i = hasPredicate ? 1 : 0;
+        var m = Mark();
+        var i = IsSym("=>") || IsSym("->") ? 1 : 0;
         if (IsIdent(i) && IsAssignmentOperator(Peek(i + 1)))
         {
-            element = ParseAssignment();
+            ParseAssignment();
         }
         else
         {
-            element = ParseAbstractTerminal();
+            ParseAbstractTerminal();
         }
 
         if (IsSym("?") || IsSym("*") || IsSym("+"))
         {
-            var card = Begin("Cardinality", Cur.Text, start).Add(element);
             Advance();
-            return Finish(card);
+            Close(m, SyntaxKind.Cardinality);
         }
-        return element;
     }
 
-    private Node ParseAction()
+    private void ParseAction()
     {
-        var node = Begin("Action");
+        var m = Mark();
         Advance();
         if (IsKw("infer") && IsIdent(1))
         {
-            var inferred = Begin("InferredType");
+            var inferred = Mark();
             Advance();
-            inferred.Name = Advance().Text;
-            node.Add(Finish(inferred));
+            Advance();
+            Close(inferred, SyntaxKind.InferredType);
         }
         else
         {
-            node.Name = ExpectIdent("a type name").Text;
+            ExpectIdent("a type name");
         }
-        if (Accept("."))
+        if (IsSym("."))
         {
-            node.Add(Leaf("Feature", ExpectIdent("a feature name")));
+            Advance();
+            var feature = Mark();
+            ExpectIdent("a feature name");
+            Close(feature, SyntaxKind.Feature);
             if (!IsAssignmentOperator(Cur) || IsSym("?="))
             {
                 throw Fail("'=' or '+='");
             }
-            node.Add(Leaf("Operator", Advance()));
+            var op = Mark();
+            Advance();
+            Close(op, SyntaxKind.Operator);
             ExpectKw("current");
         }
         ExpectSym("}");
-        return Finish(node);
+        Close(m, SyntaxKind.Action);
     }
 
-    private Node ParseAssignment()
+    private void ParseAssignment()
     {
-        var node = Begin("Assignment");
+        var m = Mark();
         if (IsSym("=>") || IsSym("->"))
         {
-            node.Add(Leaf("Predicate", Advance()));
+            var predicate = Mark();
+            Advance();
+            Close(predicate, SyntaxKind.Predicate);
         }
-        node.Name = Advance().Text;
-        node.Add(Leaf("Operator", Advance()));
-        node.Add(ParseAssignableTerminal());
-        return Finish(node);
+        var feature = Mark();
+        Advance();
+        Close(feature, SyntaxKind.Feature);
+        var op = Mark();
+        Advance();
+        Close(op, SyntaxKind.Operator);
+        ParseAssignableTerminal();
+        Close(m, SyntaxKind.Assignment);
     }
 
-    private Node ParseAssignableTerminal()
+    private void ParseAssignableTerminal()
     {
-        if (IsString()) return ParseKeyword();
-        if (IsIdent()) return ParseRuleCall();
-        if (IsSym("("))
+        if (IsString())
         {
-            var node = Begin("Parenthesized");
+            ParseKeyword();
+        }
+        else if (IsIdent())
+        {
+            ParseRuleCall();
+        }
+        else if (IsSym("("))
+        {
+            var m = Mark();
             Advance();
-            var start = Cur;
-            var first = ParseAssignableTerminal();
+            var alternatives = Mark();
+            ParseAssignableTerminal();
             if (IsSym("|"))
             {
-                var alts = Begin("Alternatives", at: start).Add(first);
                 while (Accept("|"))
                 {
-                    alts.Add(ParseAssignableTerminal());
+                    ParseAssignableTerminal();
                 }
-                first = Finish(alts);
+                Close(alternatives, SyntaxKind.Alternatives);
             }
-            node.Add(first);
             ExpectSym(")");
-            return Finish(node);
+            Close(m, SyntaxKind.Parenthesized);
         }
-        if (IsSym("[")) return ParseCrossReference();
-        throw Fail("a keyword, rule call, '(' or cross reference");
+        else if (IsSym("["))
+        {
+            ParseCrossReference();
+        }
+        else
+        {
+            throw Fail("a keyword, rule call, '(' or cross reference");
+        }
     }
 
-    private Node ParseCrossReference()
+    private void ParseCrossReference()
     {
-        var node = Begin("CrossReference");
+        var m = Mark();
         Advance();
         if (IsSym("+"))
         {
-            node.Add(Leaf("Multi", Advance()));
+            var multi = Mark();
+            Advance();
+            Close(multi, SyntaxKind.Multi);
         }
-        node.Name = ExpectIdent("a type name").Text;
+        ExpectIdent("a type name");
         if (IsSym("|") || IsSym(":"))
         {
-            node.Add(Leaf("Separator", Advance()));
-            node.Add(IsString() ? ParseKeyword() : ParseRuleCall());
+            var separator = Mark();
+            Advance();
+            Close(separator, SyntaxKind.Separator);
+            if (IsString()) ParseKeyword();
+            else ParseRuleCall();
         }
         ExpectSym("]");
-        return Finish(node);
+        Close(m, SyntaxKind.CrossReference);
     }
 
-    private Node ParseAbstractTerminal()
+    private void ParseAbstractTerminal()
     {
+        var m = Mark();
         if (IsSym("=>") || IsSym("->"))
         {
-            var predicate = Leaf("Predicate", Cur);
-            var node = IsSym("(", 1) ? Begin("PredicatedGroup") : null;
+            var predicate = Mark();
             Advance();
-            if (node is not null)
+            Close(predicate, SyntaxKind.Predicate);
+            if (IsSym("("))
             {
                 Advance();
-                node.Add(predicate).Add(ParseAlternatives());
+                ParseAlternatives();
                 ExpectSym(")");
-                return Finish(node);
+                Close(m, SyntaxKind.PredicatedGroup);
             }
-            var inner = IsString() ? ParseKeyword() : IsIdent() ? ParseRuleCall() : throw Fail("a keyword, rule call or '('");
-            inner.Children.Insert(0, predicate);
-            inner.Span = inner.Span with { Start = predicate.Span.Start };
-            return inner;
+            else if (IsString())
+            {
+                ParseKeyword();
+                Close(m, SyntaxKind.PredicatedKeyword);
+            }
+            else if (IsIdent())
+            {
+                ParseRuleCall();
+                Close(m, SyntaxKind.PredicatedRuleCall);
+            }
+            else
+            {
+                throw Fail("a keyword, rule call or '('");
+            }
         }
-        if (IsString()) return ParseKeyword();
-        if (IsKw("EOF")) return Leaf("EndOfFile", Advance());
-        if (IsIdent()) return ParseRuleCall();
-        if (IsSym("("))
+        else if (IsString())
         {
-            var node = Begin("Parenthesized");
-            Advance();
-            node.Add(ParseAlternatives());
-            ExpectSym(")");
-            return Finish(node);
+            ParseKeyword();
         }
-        throw Fail("a keyword, rule call or '('");
+        else if (IsKw("EOF"))
+        {
+            Advance();
+            Close(m, SyntaxKind.EndOfFile);
+        }
+        else if (IsIdent())
+        {
+            ParseRuleCall();
+        }
+        else if (IsSym("("))
+        {
+            Advance();
+            ParseAlternatives();
+            ExpectSym(")");
+            Close(m, SyntaxKind.Parenthesized);
+        }
+        else
+        {
+            throw Fail("a keyword, rule call or '('");
+        }
     }
 
-    private Node ParseKeyword() => Leaf("Keyword", ExpectString("a keyword string"));
-
-    private Node ParseRuleCall()
+    private void ParseKeyword()
     {
-        var node = Begin("RuleCall");
-        node.Name = ExpectIdent("a rule name").Text;
-        if (Accept("<"))
+        var m = Mark();
+        ExpectString("a keyword string");
+        Close(m, SyntaxKind.Keyword);
+    }
+
+    private void ParseRuleCall()
+    {
+        var m = Mark();
+        ExpectIdent("a rule name");
+        if (IsSym("<"))
         {
+            var arguments = Mark();
+            Advance();
             do
             {
-                node.Add(ParseNamedArgument());
+                ParseNamedArgument();
             } while (Accept(","));
             ExpectSym(">");
+            Close(arguments, SyntaxKind.ArgumentList);
         }
-        return Finish(node);
+        Close(m, SyntaxKind.RuleCall);
     }
 
-    private Node ParseNamedArgument()
+    private void ParseNamedArgument()
     {
-        var node = Begin("NamedArgument");
+        var m = Mark();
         if (IsIdent() && IsSym("=", 1))
         {
-            node.Name = Advance().Text;
+            Advance();
             Advance();
         }
-        node.Add(ParseDisjunction());
-        return Finish(node);
+        ParseDisjunction();
+        Close(m, SyntaxKind.NamedArgument);
     }
 
     // ---------------------------------------------------------------- conditions: '|' < '&' < '!' < atom
 
-    private Node ParseDisjunction() => ParseBinaryCondition("Disjunction", "|", ParseConjunction);
-    private Node ParseConjunction() => ParseBinaryCondition("Conjunction", "&", ParseNegation);
+    private void ParseDisjunction() => ParseBinaryCondition(SyntaxKind.Disjunction, "|", ParseConjunction);
+    private void ParseConjunction() => ParseBinaryCondition(SyntaxKind.Conjunction, "&", ParseNegation);
 
-    private Node ParseBinaryCondition(string kind, string op, Func<Node> operand)
+    // Left associative: each operator closes everything parsed so far into a new node.
+    private void ParseBinaryCondition(SyntaxKind kind, string op, Action operand)
     {
-        var start = Cur;
-        var left = operand();
+        var m = Mark();
+        operand();
         while (IsSym(op))
         {
-            var node = Begin(kind, at: start).Add(left);
             Advance();
-            node.Add(operand());
-            left = Finish(node);
+            operand();
+            Close(m, kind);
         }
-        return left;
     }
 
-    private Node ParseNegation()
+    private void ParseNegation()
     {
-        if (!IsSym("!")) return ParseAtom();
-        var node = Begin("Negation");
-        Advance();
-        node.Add(ParseNegation());
-        return Finish(node);
-    }
-
-    private Node ParseAtom()
-    {
-        if (IsKw("true") || IsKw("false")) return Leaf("BooleanLiteral", Advance());
-        if (IsIdent()) return Leaf("ParameterReference", Advance());
-        if (IsSym("("))
+        if (!IsSym("!"))
         {
-            var node = Begin("Parenthesized");
-            Advance();
-            node.Add(ParseDisjunction());
-            ExpectSym(")");
-            return Finish(node);
+            ParseAtom();
+            return;
         }
-        throw Fail("a condition");
+        var m = Mark();
+        Advance();
+        ParseNegation();
+        Close(m, SyntaxKind.Negation);
+    }
+
+    private void ParseAtom()
+    {
+        var m = Mark();
+        if (IsKw("true") || IsKw("false"))
+        {
+            Advance();
+            Close(m, SyntaxKind.BooleanLiteral);
+        }
+        else if (IsIdent())
+        {
+            Advance();
+            Close(m, SyntaxKind.ParameterReference);
+        }
+        else if (IsSym("("))
+        {
+            Advance();
+            ParseDisjunction();
+            ExpectSym(")");
+            Close(m, SyntaxKind.Parenthesized);
+        }
+        else
+        {
+            throw Fail("a condition");
+        }
     }
 
     // ---------------------------------------------------------------- terminal rule bodies
 
-    private Node ParseTerminalAlternatives()
+    private void ParseTerminalAlternatives()
     {
-        var start = Cur;
-        var first = ParseTerminalGroup();
-        if (!IsSym("|")) return first;
-        var node = Begin("TerminalAlternatives", at: start).Add(first);
+        var m = Mark();
+        ParseTerminalGroup();
+        if (!IsSym("|")) return;
         while (Accept("|"))
         {
-            node.Add(ParseTerminalGroup());
+            ParseTerminalGroup();
         }
-        return Finish(node);
+        Close(m, SyntaxKind.TerminalAlternatives);
     }
 
-    private Node ParseTerminalGroup()
+    private void ParseTerminalGroup()
     {
-        var start = Cur;
-        var first = ParseTerminalToken();
-        if (!IsTerminalTokenStart()) return first;
-        var node = Begin("TerminalGroup", at: start).Add(first);
+        var m = Mark();
+        ParseTerminalToken();
+        if (!IsTerminalTokenStart()) return;
         while (IsTerminalTokenStart())
         {
-            node.Add(ParseTerminalToken());
+            ParseTerminalToken();
         }
-        return Finish(node);
+        Close(m, SyntaxKind.TerminalGroup);
     }
 
     private bool IsTerminalTokenStart() =>
         Cur.Kind is "Identifier" or "StringLiteral" or "RegexLiteral" || IsSym("(") || IsSym("!") || IsSym("->") || IsSym(".");
 
-    private Node ParseTerminalToken()
+    private void ParseTerminalToken()
     {
-        var start = Cur;
-        var element = ParseTerminalTokenElement();
+        var m = Mark();
+        ParseTerminalTokenElement();
         if (IsSym("?") || IsSym("*") || IsSym("+"))
         {
-            var card = Begin("Cardinality", Cur.Text, start).Add(element);
             Advance();
-            return Finish(card);
+            Close(m, SyntaxKind.Cardinality);
         }
-        return element;
     }
 
-    private Node ParseTerminalTokenElement()
+    private void ParseTerminalTokenElement()
     {
+        var m = Mark();
         if (IsString())
         {
-            var range = Begin("CharacterRange").Add(ParseKeyword());
+            ParseKeyword();
             if (Accept(".."))
             {
-                range.Add(ParseKeyword());
+                ParseKeyword();
             }
-            return Finish(range);
+            Close(m, SyntaxKind.CharacterRange);
         }
-        if (IsIdent()) return Leaf("TerminalRuleCall", Advance());
-        if (Cur.Kind == "RegexLiteral") return Leaf("RegexToken", Advance());
-        if (IsSym(".")) return Leaf("Wildcard", Advance());
-        if (IsSym("!") || IsSym("->"))
+        else if (IsIdent())
         {
-            var node = Begin(IsSym("!") ? "NegatedToken" : "UntilToken");
             Advance();
-            node.Add(ParseTerminalTokenElement());
-            return Finish(node);
+            Close(m, SyntaxKind.TerminalRuleCall);
         }
-        if (IsSym("("))
+        else if (Cur.Kind == "RegexLiteral")
         {
-            var node = Begin("Parenthesized");
+            Advance();
+            Close(m, SyntaxKind.RegexToken);
+        }
+        else if (IsSym("."))
+        {
+            Advance();
+            Close(m, SyntaxKind.Wildcard);
+        }
+        else if (IsSym("!") || IsSym("->"))
+        {
+            var kind = IsSym("!") ? SyntaxKind.NegatedToken : SyntaxKind.UntilToken;
+            Advance();
+            ParseTerminalTokenElement();
+            Close(m, kind);
+        }
+        else if (IsSym("("))
+        {
             Advance();
             if (IsSym("?=") || IsSym("?!") || IsSym("?<=") || IsSym("?<!"))
             {
-                node.Add(Leaf("Lookahead", Advance()));
+                var lookahead = Mark();
+                Advance();
+                Close(lookahead, SyntaxKind.Lookahead);
             }
-            node.Add(ParseTerminalAlternatives());
+            ParseTerminalAlternatives();
             ExpectSym(")");
-            return Finish(node);
+            Close(m, SyntaxKind.Parenthesized);
         }
-        throw Fail("a terminal element");
+        else
+        {
+            throw Fail("a terminal element");
+        }
     }
 }
