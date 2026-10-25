@@ -8,6 +8,16 @@ public enum SyntaxKind : ushort
 {
     None = 0,
 
+    // ---- structure (zero-width placeholders and child collections)
+    /// <summary>An optional part that is not there. One shared zero-width node.</summary>
+    Absent,
+    /// <summary>A required part the parser expected but did not find (flagged <see cref="GreenNodeFlags.IsMissing"/>).</summary>
+    Missing,
+    /// <summary>Zero or more consecutive children of the same slot.</summary>
+    List,
+    /// <summary>Items alternating with separator tokens (<c>a | b | c</c>); never starts or ends with a separator.</summary>
+    SeparatedList,
+
     // ---- trivia (leaf nodes, attached to the following token)
     WhitespaceTrivia,
     SingleLineCommentTrivia,
@@ -68,7 +78,7 @@ public enum SyntaxKind : ushort
     Multi,
     SimpleType,
     StringType,
-    Parenthesized,
+    ParenthesizedType,
     StringLiteral,
     NumberLiteral,
     BooleanLiteral,
@@ -104,6 +114,7 @@ public enum SyntaxKind : ushort
     PredicatedGroup,
     CrossReference,
     Separator,
+    ParenthesizedElement,
     EndOfFile,
     Keyword,
     RuleCall,
@@ -113,10 +124,12 @@ public enum SyntaxKind : ushort
     Conjunction,
     Negation,
     ParameterReference,
+    ParenthesizedCondition,
 
     // ---- terminal rule bodies
     TerminalAlternatives,
     TerminalGroup,
+    TerminalCardinality,
     CharacterRange,
     TerminalRuleCall,
     RegexToken,
@@ -124,4 +137,5 @@ public enum SyntaxKind : ushort
     NegatedToken,
     UntilToken,
     Lookahead,
+    ParenthesizedTerminal,
 }

@@ -107,20 +107,21 @@ public sealed class Parser
     {
         var result = new Dictionary<int, ReusableDeclaration>();
         var root = previous.Arena.GetReader(previous.Green.RootHandle);
-        var start = 0;
-        for (var i = 0; i < root.ChildCount; i++)
+        // Grammar = [GrammarDeclaration?, Members, EndOfFile]; only the members can be taken over.
+        var members = root.GetChild(1);
+        var start = root.GetChild(0).FullWidth;
+        for (var i = 0; i < members.ChildCount; i++)
         {
-            var node = root.GetChild(i);
+            var node = members.GetChild(i);
             var end = start + node.FullWidth;
             var delta = end <= change.Start ? 0 : start >= change.OldEnd ? change.Delta : int.MinValue;
-            if (delta != int.MinValue && !node.IsToken && !node.ContainsError && node.Kind != SyntaxKind.GrammarDeclaration)
+            if (delta != int.MinValue && !node.IsToken && !node.ContainsError)
             {
-                var first = node;
-                while (!first.IsToken) first = first.GetChild(0);
-                var last = node;
-                while (!last.IsToken) last = last.GetChild(last.ChildCount - 1);
-                result[start + delta] = new ReusableDeclaration(
-                    node.Handle, node.FullWidth, end + delta, first.Handle, last.Handle, last.Kind == SyntaxKind.SemicolonToken);
+                if (node.TryGetFirstToken(out var first) && node.TryGetLastToken(out var last))
+                {
+                    result[start + delta] = new ReusableDeclaration(
+                        node.Handle, node.FullWidth, end + delta, first.Handle, last.Handle, last.Kind == SyntaxKind.SemicolonToken);
+                }
             }
             start = end;
         }
@@ -236,7 +237,12 @@ public sealed class Parser
     /// <summary>Position in the child list; everything added after it can later be closed into a node.</summary>
     private int Mark() => _children.Count;
 
-    /// <summary>Makes all children added since <paramref name="mark"/> the children of a new node of the given kind.</summary>
+    /// <summary>
+    /// Makes all children added since <paramref name="mark"/> the children of a new node of the given kind. The children are
+    /// first fitted to the kind's fixed slots (see <see cref="SyntaxSchema"/>): optional parts that are not there become
+    /// <see cref="SyntaxKind.Absent"/>, required ones that are not there <see cref="SyntaxKind.Missing"/>, and runs of items
+    /// are wrapped in list nodes.
+    /// </summary>
     private void Close(int mark, SyntaxKind kind)
     {
         var count = _children.Count - mark;
@@ -247,11 +253,86 @@ public sealed class Parser
         }
         // Error nodes are flagged so that ContainsError tells which declarations had syntax errors (they are never reused).
         var flags = kind == SyntaxKind.Error ? GreenNodeFlags.IsError : GreenNodeFlags.None;
-        var handle = _cache.GetOrAdd(kind, width, CollectionsMarshal.AsSpan(_children).Slice(mark, count), flags);
+        var children = CollectionsMarshal.AsSpan(_children).Slice(mark, count);
+        var slots = SyntaxSchema.GetSlots(kind);
+        var handle = slots.IsEmpty
+            ? _cache.GetOrAdd(kind, width, children, flags)
+            : _cache.GetOrAdd(kind, width, FitToSlots(kind, slots, children), flags);
         _children.RemoveRange(mark, count);
         _widths.RemoveRange(mark, count);
         _children.Add(handle);
         _widths.Add(width);
+    }
+
+    private readonly List<GreenNodeHandle> _slotted = [];
+
+    /// <summary>Greedy left-to-right assignment of the children to the slots; see <see cref="Close"/>.</summary>
+    private ReadOnlySpan<GreenNodeHandle> FitToSlots(SyntaxKind kind, ReadOnlySpan<SlotSpec> slots, ReadOnlySpan<GreenNodeHandle> children)
+    {
+        _slotted.Clear();
+        var next = 0;
+        foreach (var slot in slots)
+        {
+            switch (slot.Shape)
+            {
+                case SlotShape.Required or SlotShape.Optional:
+                    if (next < children.Length && slot.Accepts(KindOf(children[next])))
+                    {
+                        _slotted.Add(children[next++]);
+                    }
+                    else
+                    {
+                        _slotted.Add(slot.Shape == SlotShape.Optional ? AbsentNode() : MissingNode(slot));
+                    }
+                    break;
+
+                case SlotShape.List:
+                    var start = next;
+                    while (next < children.Length && slot.Accepts(KindOf(children[next])))
+                    {
+                        next++;
+                    }
+                    _slotted.Add(ListNode(SyntaxKind.List, children[start..next]));
+                    break;
+
+                case SlotShape.SeparatedList:
+                    start = next;
+                    if (next < children.Length && slot.Accepts(KindOf(children[next])))
+                    {
+                        next++;
+                        while (next + 1 < children.Length && KindOf(children[next]) == slot.Separator && slot.Accepts(KindOf(children[next + 1])))
+                        {
+                            next += 2;
+                        }
+                    }
+                    _slotted.Add(ListNode(SyntaxKind.SeparatedList, children[start..next]));
+                    break;
+            }
+        }
+        if (next < children.Length)
+        {
+            throw new InvalidOperationException($"{KindOf(children[next])} does not fit into the slots of {kind}; the parser and SyntaxSchema disagree.");
+        }
+        return CollectionsMarshal.AsSpan(_slotted);
+    }
+
+    private SyntaxKind KindOf(GreenNodeHandle handle) => _arena.GetReader(handle).Kind;
+
+    private GreenNodeHandle AbsentNode() => _cache.GetOrAdd(SyntaxKind.Absent, 0, []);
+
+    private GreenNodeHandle MissingNode(SlotSpec slot) =>
+        slot.Category == SyntaxCategory.None && SyntaxFacts.IsToken(slot.Kind)
+            ? _cache.GetOrAdd(slot.Kind, 0, [], GreenNodeFlags.IsToken | GreenNodeFlags.IsMissing)
+            : _cache.GetOrAdd(SyntaxKind.Missing, 0, [], GreenNodeFlags.IsMissing);
+
+    private GreenNodeHandle ListNode(SyntaxKind listKind, ReadOnlySpan<GreenNodeHandle> items)
+    {
+        var width = 0;
+        foreach (var item in items)
+        {
+            width += _arena.GetReader(item).FullWidth;
+        }
+        return _cache.GetOrAdd(listKind, width, items);
     }
 
     // ---------------------------------------------------------------- file level
@@ -513,7 +594,7 @@ public sealed class Parser
             Advance();
             ParseTypeDefinition();
             ExpectSym(")");
-            Close(m, SyntaxKind.Parenthesized);
+            Close(m, SyntaxKind.ParenthesizedType);
         }
         else if (IsIdent())
         {
@@ -823,7 +904,7 @@ public sealed class Parser
                 Close(alternatives, SyntaxKind.Alternatives);
             }
             ExpectSym(")");
-            Close(m, SyntaxKind.Parenthesized);
+            Close(m, SyntaxKind.ParenthesizedElement);
         }
         else if (IsSym("["))
         {
@@ -906,7 +987,7 @@ public sealed class Parser
             Advance();
             ParseAlternatives();
             ExpectSym(")");
-            Close(m, SyntaxKind.Parenthesized);
+            Close(m, SyntaxKind.ParenthesizedElement);
         }
         else
         {
@@ -1000,7 +1081,7 @@ public sealed class Parser
             Advance();
             ParseDisjunction();
             ExpectSym(")");
-            Close(m, SyntaxKind.Parenthesized);
+            Close(m, SyntaxKind.ParenthesizedCondition);
         }
         else
         {
@@ -1044,7 +1125,7 @@ public sealed class Parser
         if (IsSym("?") || IsSym("*") || IsSym("+"))
         {
             Advance();
-            Close(m, SyntaxKind.Cardinality);
+            Close(m, SyntaxKind.TerminalCardinality);
         }
     }
 
@@ -1093,7 +1174,7 @@ public sealed class Parser
             }
             ParseTerminalAlternatives();
             ExpectSym(")");
-            Close(m, SyntaxKind.Parenthesized);
+            Close(m, SyntaxKind.ParenthesizedTerminal);
         }
         else
         {

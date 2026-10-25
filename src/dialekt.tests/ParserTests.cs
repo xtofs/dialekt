@@ -41,8 +41,8 @@ public class ParserTests
     {
         var result = Parser.Parse("A: b=; B: c=ID; C: d=; D: 'ok';\n");
         Assert.Equal(2, result.Diagnostics.Count);
-        Assert.Equal(2, result.Tree.Root.Children.Count(n => n.Kind == SyntaxKind.ParserRule));
-        Assert.Equal(2, result.Tree.Root.Children.Count(n => n.Kind == SyntaxKind.Error));
+        Assert.Equal(2, TestFiles.Members(result.Tree).Count(n => n.Kind == SyntaxKind.ParserRule));
+        Assert.Equal(2, TestFiles.Members(result.Tree).Count(n => n.Kind == SyntaxKind.Error));
     }
 
     [Fact]

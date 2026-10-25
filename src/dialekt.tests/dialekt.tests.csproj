@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\dialekt\dialekt.csproj" />
+    <ProjectReference Include="..\..\tools\SyntaxGenerator\SyntaxGenerator.csproj" />
   </ItemGroup>
 
   <ItemGroup>

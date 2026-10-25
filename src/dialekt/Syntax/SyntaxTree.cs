@@ -9,7 +9,6 @@ using Dialekt.Green;
 public sealed class SyntaxTree
 {
     private readonly Lazy<LineMap> _lineMap;
-    private readonly Lazy<SyntaxNode> _root;
 
     public SyntaxTree(GreenTree green, string source)
     {
@@ -20,13 +19,50 @@ public sealed class SyntaxTree
         Green = green;
         Source = source;
         _lineMap = new Lazy<LineMap>(() => new LineMap(source));
-        _root = new Lazy<SyntaxNode>(() => new SyntaxNode(this, null, green.RootHandle, 0, 0));
     }
 
     public GreenTree Green { get; }
     public string Source { get; }
     public LineMap LineMap => _lineMap.Value;
-    public SyntaxNode Root => _root.Value;
+    public SyntaxNode Root => new(this, Green.RootHandle, 0);
+
+    /// <summary>The root as a typed view.</summary>
+    public GrammarSyntax Grammar => GrammarSyntax.Create(Root);
+
+    /// <summary>
+    /// The parent of <paramref name="node"/>, or null for the root. Green nodes do not know their parent, so this descends
+    /// from the root by position: at each level the node itself is looked for among the children, then the child covering
+    /// its position is entered. A zero-width node (e.g. an absent optional part) cannot be told apart from an equal sibling
+    /// at the same position; for those the outermost match is returned.
+    /// </summary>
+    public SyntaxNode? GetParent(SyntaxNode node)
+    {
+        var current = Root;
+        if (node == current) return null;
+
+        while (true)
+        {
+            SyntaxNode? next = null;
+            foreach (var child in current.Children)
+            {
+                if (child == node) return current;
+                if (next is null && child.Position <= node.Position && node.Position < child.End)
+                {
+                    next = child;
+                }
+            }
+            current = next ?? throw new ArgumentException("The node does not belong to this tree.", nameof(node));
+        }
+    }
+
+    /// <summary>The parent, grandparent, ... of <paramref name="node"/> up to the root.</summary>
+    public IEnumerable<SyntaxNode> Ancestors(SyntaxNode node)
+    {
+        for (var parent = GetParent(node); parent is { } p; parent = GetParent(p))
+        {
+            yield return p;
+        }
+    }
 
     public GreenArena Arena => Green.Arena;
 

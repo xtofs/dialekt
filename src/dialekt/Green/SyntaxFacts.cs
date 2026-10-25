@@ -2,6 +2,9 @@ namespace Dialekt.Green;
 
 public static class SyntaxFacts
 {
+    /// <summary>Whether <paramref name="kind"/> is a token kind (identifiers, literals, symbols, error and end of file).</summary>
+    public static bool IsToken(SyntaxKind kind) => kind is >= SyntaxKind.IdentifierToken and <= SyntaxKind.QuestionEqualsToken;
+
     /// <summary>Length of the longest symbol in <see cref="TryGetSymbolKind"/>.</summary>
     public const int MaxSymbolLength = 3;
 

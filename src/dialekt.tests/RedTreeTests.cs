@@ -28,7 +28,8 @@ public class RedTreeTests
             var position = node.Position;
             foreach (var child in node.Children)
             {
-                Assert.Same(node, child.Parent);
+                // a zero-width child (absent part, empty list) cannot be told from an equal sibling, see SyntaxTree.GetParent
+                if (child.FullWidth > 0) Assert.Equal(node, child.Parent);
                 Assert.Equal(position, child.Position);
                 position = child.End;
             }
@@ -63,7 +64,7 @@ public class RedTreeTests
         Assert.Equal(SyntaxKind.EndOfFileToken, tree.Root.FindToken(tree.Source.Length).Kind);
         // text inside a token maps to that token
         var identifier = tree.Root.Descendants().First(n => n.Kind == SyntaxKind.IdentifierToken);
-        Assert.Same(identifier, tree.Root.FindToken(identifier.TextStart));
+        Assert.Equal(identifier, tree.Root.FindToken(identifier.TextStart));
     }
 
     [Theory]
@@ -84,11 +85,11 @@ public class RedTreeTests
     public void Node_text_excludes_leading_trivia()
     {
         var tree = Parser.Parse("  /* c */ A: b=ID;\n").Tree;
-        var rule = tree.Root.Children.First();
+        var rule = TestFiles.Members(tree).First();
         Assert.Equal(SyntaxKind.ParserRule, rule.Kind);
         Assert.Equal("A: b=ID;", rule.Text);
         Assert.Equal("  /* c */ A: b=ID;", rule.FullText);
         Assert.Equal((1, 11), rule.StartLineAndColumn);
-        Assert.Equal(tree.Root, rule.Ancestors().Single());
+        Assert.Equal([SyntaxKind.List, SyntaxKind.Grammar], rule.Ancestors().Select(a => a.Kind));
     }
 }

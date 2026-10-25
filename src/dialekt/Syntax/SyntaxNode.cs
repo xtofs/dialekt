@@ -1,51 +1,39 @@
 namespace Dialekt.Syntax;
 
+using System.Collections;
 using Dialekt.Green;
 
 /// <summary>
-/// Red node: a green node together with its parent and absolute position. Red nodes are created on demand while
-/// walking down from <see cref="SyntaxTree.Root"/> and cached, so a node and its parent chain are always consistent.
-/// A green node that occurs in several places (the same subtree shared by many parents) has one red node per place.
+/// Red node: a throw-away view of a green node together with its absolute position. It holds only the tree, the
+/// green handle and the position (16 bytes), allocates nothing and caches nothing; navigating just recreates views.
+/// There is no parent pointer: <see cref="Parent"/> and <see cref="Ancestors"/> re-descend from the root.
+/// The same green node can appear at several positions (hash-consed subtrees), so identity is (handle, position).
 /// </summary>
-public sealed class SyntaxNode
+public readonly struct SyntaxNode : IEquatable<SyntaxNode>
 {
-    private SyntaxNode?[]? _children;
-    private int[]? _childOffsets;
-    private int _leadingTriviaWidth = -1;
-
-    internal SyntaxNode(SyntaxTree tree, SyntaxNode? parent, GreenNodeHandle handle, int position, int slotInParent)
+    internal SyntaxNode(SyntaxTree tree, GreenNodeHandle handle, int position)
     {
         Tree = tree;
-        Parent = parent;
         Handle = handle;
         Position = position;
-        SlotInParent = slotInParent;
-
-        var green = tree.Arena.GetReader(handle);
-        Kind = green.Kind;
-        FullWidth = green.FullWidth;
-        Flags = green.Flags;
-        ChildCount = green.ChildCount;
     }
 
     public SyntaxTree Tree { get; }
-    public SyntaxNode? Parent { get; }
     public GreenNodeHandle Handle { get; }
-    /// <summary>Index of this node in its parent's slots; 0 for the root.</summary>
-    public int SlotInParent { get; }
-
-    public SyntaxKind Kind { get; }
-    public GreenNodeFlags Flags { get; }
-    public int ChildCount { get; }
-
     /// <summary>Absolute offset where the node starts, including its leading trivia.</summary>
     public int Position { get; }
-    public int FullWidth { get; }
+
+    private GreenNodeReader Green => Tree.Arena.GetReader(Handle);
+
+    public SyntaxKind Kind => Green.Kind;
+    public GreenNodeFlags Flags => Green.Flags;
+    public int ChildCount => Green.ChildCount;
+    public int FullWidth => Green.FullWidth;
     public int End => Position + FullWidth;
 
-    public bool IsToken => (Flags & GreenNodeFlags.IsToken) != 0;
-    public bool IsTrivia => (Flags & GreenNodeFlags.IsTrivia) != 0;
-    public bool ContainsError => (Flags & GreenNodeFlags.ContainsError) != 0;
+    public bool IsToken => Green.IsToken;
+    public bool IsTrivia => Green.IsTrivia;
+    public bool ContainsError => Green.ContainsError;
 
     /// <summary>Absolute offset where the node's text starts, i.e. after the leading trivia of its first token.</summary>
     public int TextStart => Position + LeadingTriviaWidth;
@@ -56,16 +44,7 @@ public sealed class SyntaxNode
     {
         get
         {
-            if (_leadingTriviaWidth < 0)
-            {
-                var green = Tree.Arena.GetReader(Handle);
-                while (!green.IsToken && green.ChildCount > 0)
-                {
-                    green = green.GetChild(0);
-                }
-                _leadingTriviaWidth = green.IsToken ? green.LeadingTriviaWidth : 0;
-            }
-            return _leadingTriviaWidth;
+            return Green.TryGetFirstToken(out var token) ? token.LeadingTriviaWidth : 0;
         }
     }
 
@@ -76,57 +55,27 @@ public sealed class SyntaxNode
     /// <summary>1-based line and column where the node's text starts.</summary>
     public (int Line, int Column) StartLineAndColumn => Tree.LineMap.GetLineAndColumn(TextStart);
 
+    /// <summary>The child in <paramref name="slot"/>; its position is the sum of the widths of the slots before it.</summary>
     public SyntaxNode GetChild(int slot)
     {
-        if ((uint)slot >= (uint)ChildCount) throw new ArgumentOutOfRangeException(nameof(slot));
+        var green = Green;
+        if ((uint)slot >= (uint)green.ChildCount) throw new ArgumentOutOfRangeException(nameof(slot));
 
-        var children = _children ?? Interlocked.CompareExchange(ref _children, new SyntaxNode?[ChildCount], null) ?? _children!;
-        var existing = Volatile.Read(ref children[slot]);
-        if (existing is not null) return existing;
-
-        var green = Tree.Arena.GetReader(Handle);
-        var created = new SyntaxNode(Tree, this, green.GetChildHandle(slot), Position + ChildOffsets[slot], slot);
-        return Interlocked.CompareExchange(ref children[slot], created, null) ?? created;
-    }
-
-    /// <summary>Offset of each child from this node's position, plus the total as the last entry.</summary>
-    private int[] ChildOffsets
-    {
-        get
+        var position = Position;
+        for (var i = 0; i < slot; i++)
         {
-            if (_childOffsets is null)
-            {
-                var green = Tree.Arena.GetReader(Handle);
-                var offsets = new int[ChildCount + 1];
-                for (var i = 0; i < ChildCount; i++)
-                {
-                    offsets[i + 1] = offsets[i] + green.GetChild(i).FullWidth;
-                }
-                _childOffsets = offsets;
-            }
-            return _childOffsets;
+            position += green.GetChild(i).FullWidth;
         }
+        return new SyntaxNode(Tree, green.GetChildHandle(slot), position);
     }
 
     /// <summary>All children; for a token these are its leading trivia.</summary>
-    public IEnumerable<SyntaxNode> Children
-    {
-        get
-        {
-            for (var i = 0; i < ChildCount; i++)
-            {
-                yield return GetChild(i);
-            }
-        }
-    }
+    public ChildList Children => new(this);
 
-    public IEnumerable<SyntaxNode> Ancestors()
-    {
-        for (var node = Parent; node is not null; node = node.Parent)
-        {
-            yield return node;
-        }
-    }
+    /// <summary>The node that has this node as a child, or null for the root. Costs a descent from the root; see <see cref="SyntaxTree.GetParent"/>.</summary>
+    public SyntaxNode? Parent => Tree.GetParent(this);
+
+    public IEnumerable<SyntaxNode> Ancestors() => Tree.Ancestors(this);
 
     /// <summary>Pre-order traversal of this node and everything below it (trivia included).</summary>
     public IEnumerable<SyntaxNode> DescendantsAndSelf()
@@ -156,17 +105,67 @@ public sealed class SyntaxNode
         var node = this;
         while (!node.IsToken)
         {
-            if (node.ChildCount == 0) throw new InvalidOperationException("Node without tokens.");
-            var offsets = node.ChildOffsets;
-            var relative = offset - node.Position;
-            var slot = Array.BinarySearch(offsets, 0, node.ChildCount, relative);
-            slot = slot >= 0 ? slot : ~slot - 1;
-            // zero-width children can share an offset; the last child starts at or before the end.
-            slot = Math.Min(slot, node.ChildCount - 1);
-            node = node.GetChild(slot);
+            // zero-width children (absent, empty lists) cover no offset; at the very end the last child with a token is the answer
+            SyntaxNode? next = null;
+            foreach (var child in node.Children)
+            {
+                if (child.Position <= offset && offset < child.End)
+                {
+                    next = child;
+                    break;
+                }
+                if (offset == node.End && child.Green.TryGetFirstToken(out _))
+                {
+                    next = child;
+                }
+            }
+            node = next ?? throw new InvalidOperationException("No child covers the offset.");
         }
         return node;
     }
 
+    public bool Equals(SyntaxNode other) => ReferenceEquals(Tree, other.Tree) && Handle == other.Handle && Position == other.Position;
+    public override bool Equals(object? obj) => obj is SyntaxNode other && Equals(other);
+    public override int GetHashCode() => HashCode.Combine(Tree, Handle, Position);
+    public static bool operator ==(SyntaxNode left, SyntaxNode right) => left.Equals(right);
+    public static bool operator !=(SyntaxNode left, SyntaxNode right) => !left.Equals(right);
+
     public override string ToString() => $"{Kind} [{Position}..{End})";
+
+    /// <summary>Allocation-free enumeration of the children of a node.</summary>
+    public readonly struct ChildList(SyntaxNode parent) : IEnumerable<SyntaxNode>
+    {
+        public int Count => parent.ChildCount;
+
+        public Enumerator GetEnumerator() => new(parent);
+        IEnumerator<SyntaxNode> IEnumerable<SyntaxNode>.GetEnumerator() => GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public struct Enumerator(SyntaxNode parent) : IEnumerator<SyntaxNode>
+        {
+            private int _index = -1;
+            private int _position = parent.Position;
+
+            public SyntaxNode Current { get; private set; }
+            object IEnumerator.Current => Current;
+
+            public bool MoveNext()
+            {
+                var green = parent.Green;
+                if (_index >= 0)
+                {
+                    _position += Current.FullWidth;
+                }
+                if (++_index >= green.ChildCount)
+                {
+                    return false;
+                }
+                Current = new SyntaxNode(parent.Tree, green.GetChildHandle(_index), _position);
+                return true;
+            }
+
+            public void Reset() => throw new NotSupportedException();
+            public void Dispose() { }
+        }
+    }
 }

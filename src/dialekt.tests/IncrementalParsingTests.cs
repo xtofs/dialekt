@@ -64,8 +64,7 @@ public class IncrementalParsingTests
     {
         var text = Load(file);
         var result = Parser.Parse(text);
-        var root = result.Tree.Root;
-        var boundaries = root.Children.SelectMany(c => new[] { c.Position, c.TextStart, c.End }).Distinct().ToList();
+        var boundaries = TestFiles.Members(result.Tree).SelectMany(c => new[] { c.Position, c.TextStart, c.End }).Distinct().ToList();
         var random = new Random(99);
 
         foreach (var at in boundaries)
@@ -86,7 +85,7 @@ public class IncrementalParsingTests
     {
         var text = TestFiles.GrammarText;
         var before = Parser.Parse(text);
-        var declarations = before.Tree.Root.Children.Count(c => !c.IsToken);
+        var declarations = TestFiles.Members(before.Tree).Count();
 
         var at = text.IndexOf("'interface' name=ID", StringComparison.Ordinal) + 3;
         var newText = text.Insert(at, "x");

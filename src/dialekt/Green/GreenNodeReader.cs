@@ -46,6 +46,41 @@ public readonly ref struct GreenNodeReader
 
     public GreenNodeReader GetChild(int slotIndex) => new(_buffer, GetChildHandle(slotIndex));
 
+    /// <summary>
+    /// The first token below this node that is really there (skipping absent and missing placeholders), or false if the
+    /// node has none. Used wherever "the first token" matters (leading trivia, reuse of declarations).
+    /// </summary>
+    public bool TryGetFirstToken(out GreenNodeReader token)
+    {
+        if (IsToken)
+        {
+            token = this;
+            return (Flags & GreenNodeFlags.IsMissing) == 0;
+        }
+        for (var i = 0; i < ChildCount; i++)
+        {
+            if (GetChild(i).TryGetFirstToken(out token)) return true;
+        }
+        token = default;
+        return false;
+    }
+
+    /// <summary>The last token below this node that is really there; see <see cref="TryGetFirstToken"/>.</summary>
+    public bool TryGetLastToken(out GreenNodeReader token)
+    {
+        if (IsToken)
+        {
+            token = this;
+            return (Flags & GreenNodeFlags.IsMissing) == 0;
+        }
+        for (var i = ChildCount - 1; i >= 0; i--)
+        {
+            if (GetChild(i).TryGetLastToken(out token)) return true;
+        }
+        token = default;
+        return false;
+    }
+
     /// <summary>For a token: the width of its leading trivia, i.e. the offset of the token text within the node.</summary>
     public int LeadingTriviaWidth
     {

@@ -16,12 +16,15 @@ public class TreeFormatter(string fileName)
 
     public bool ShowTrivia { get; init; }
 
+    /// <summary>Also print the placeholders for optional parts that are not there.</summary>
+    public bool ShowAbsent { get; init; }
+
     public void PrintTree(SyntaxTree tree)
     {
-        PrintNode(tree.Root, "", true);
+        PrintNode(tree.Root, null, "", true);
     }
 
-    private void PrintNode(SyntaxNode node, string indent, bool isLast)
+    private void PrintNode(SyntaxNode node, string? slotName, string indent, bool isLast)
     {
         Console.Write(indent);
         if (isLast)
@@ -41,12 +44,24 @@ public class TreeFormatter(string fileName)
         {
             text = " " + node.Text.Replace("\n", "\\n").Replace("\r", "\\r");
         }
-        Console.WriteLine($" {node.Kind}{text} {_fileName}({line},{column})");
+        var slot = slotName is null ? "" : $" {slotName}:";
+        Console.WriteLine($"{slot} {node.Kind}{text} {_fileName}({line},{column})");
 
-        var visible = node.Children.Where(child => ShowTrivia || !child.IsTrivia).ToList();
+        var slots = SyntaxSchema.GetSlots(node.Kind);
+        var visible = new List<(SyntaxNode Child, string? Slot)>();
+        var index = 0;
+        foreach (var child in node.Children)
+        {
+            var hidden = (!ShowTrivia && child.IsTrivia) || (!ShowAbsent && child.Kind == SyntaxKind.Absent);
+            if (!hidden)
+            {
+                visible.Add((child, index < slots.Length ? slots[index].Name : null));
+            }
+            index++;
+        }
         for (var i = 0; i < visible.Count; i++)
         {
-            PrintNode(visible[i], indent, i == visible.Count - 1);
+            PrintNode(visible[i].Child, visible[i].Slot, indent, i == visible.Count - 1);
         }
     }
 }
