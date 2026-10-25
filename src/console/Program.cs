@@ -10,6 +10,7 @@ internal class Program
         // Without files, parses langium-grammar.langium and langium-types.langium from the repository root.
         var showTree = args.Contains("--tree");
         var showTrivia = args.Contains("--trivia");
+        var isEdit = args.Contains("--edit");
         var files = args.Where(a => !a.StartsWith("--")).ToList();
 
         AddDefaultFilesIfNoneProvided(ref files);
@@ -39,12 +40,17 @@ internal class Program
             var reparsed = Parser.Parse(content, result.Tree);
             Console.WriteLine("  reparse: {0}, arena grew by {1} bytes", reparsed.Tree.Green.RootHandle == result.Tree.Green.RootHandle ? "same root" : "NEW root", reparsed.Tree.Arena.Length - arena.Length);
 
-            if (args.Contains("--edit"))
+            if (isEdit)
             {
                 // Incremental parse after a one-character edit in the middle of the file.
-                var at = content.IndexOf('\n', content.Length / 2);
-                var edited = content.Insert(at, " ");
-                var incremental = Parser.Parse(edited, result.Tree, new TextChange(at, 0, 1));
+                var at = content.IndexOf('\n', content.Length / 2 - 5);
+                var insert = "  ";
+                var edited = content.Insert(at, insert);
+
+                Console.WriteLine("edited: {0}",
+                    edited[(at - 20)..at] + "⟨HERE⟩" + edited[at..(at + 20)].WithControlCharactersAsPictures());
+
+                var incremental = Parser.ReParse(edited, result.Tree, new TextChange(at, 0, insert.Length));
                 Console.WriteLine("  edit at {0}: reused {1} declarations, reparsed {2}", at, incremental.ReusedDeclarations, incremental.ReparsedDeclarations);
             }
 
@@ -61,20 +67,20 @@ internal class Program
             failed |= result.Diagnostics.Count > 0;
         }
         return failed ? 1 : 0;
+    }
 
-        static void AddDefaultFilesIfNoneProvided(ref List<string> files)
+    static void AddDefaultFilesIfNoneProvided(ref List<string> files)
+    {
+        if (files.Count == 0)
         {
-            if (files.Count == 0)
+            var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "langium-grammar.langium")))
             {
-                var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-                while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "langium-grammar.langium")))
-                {
-                    dir = dir.Parent;
-                }
-                var root = dir?.FullName ?? ".";
-                files = [Path.Combine(root, "langium-grammar.langium"), Path.Combine(root, "langium-types.langium")];
+                dir = dir.Parent;
             }
-
+            var root = dir?.FullName ?? ".";
+            files = [Path.Combine(root, "langium-grammar.langium"), Path.Combine(root, "langium-types.langium")];
         }
+
     }
 }

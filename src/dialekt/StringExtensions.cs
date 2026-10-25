@@ -2,9 +2,9 @@ namespace Dialekt;
 
 using System.Text;
 
-static class StringExtensions
+public static class StringExtensions
 {
-    public static string ControlCharacterPictures(this string input)
+    public static string WithControlCharactersAsPictures(this string input)
     {
         return string.Create(input.Length * 4, input, (span, value) =>
         {

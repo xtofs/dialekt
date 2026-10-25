@@ -87,7 +87,7 @@ public sealed class Parser
     /// Parses <paramref name="content"/>, the text of <paramref name="previous"/> with <paramref name="change"/> applied,
     /// reusing the declarations of the previous tree that the change did not affect.
     /// </summary>
-    public static ParseResult Parse(string content, SyntaxTree previous, TextChange change) => Parse(content, previous, (TextChange?)change);
+    public static ParseResult ReParse(string content, SyntaxTree previous, TextChange change) => Parse(content, previous, (TextChange?)change);
 
     private static ParseResult Parse(string content, SyntaxTree? previous, TextChange? change)
     {

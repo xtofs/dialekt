@@ -18,7 +18,7 @@ public class IncrementalParsingTests
     /// <summary>The incremental result must be exactly what a full parse gives; nodes are hash-consed, so equal structure is an equal root handle.</summary>
     private static ParseResult ApplyAndCheck(ParseResult before, string oldText, TextChange change, string newText, string context)
     {
-        var incremental = Parser.Parse(newText, before.Tree, change);
+        var incremental = Parser.ReParse(newText, before.Tree, change);
         var full = Parser.Parse(newText, incremental.Tree);
 
         Assert.True(full.Tree.Green.RootHandle == incremental.Tree.Green.RootHandle, $"different tree: {context}");
@@ -90,7 +90,7 @@ public class IncrementalParsingTests
 
         var at = text.IndexOf("'interface' name=ID", StringComparison.Ordinal) + 3;
         var newText = text.Insert(at, "x");
-        var after = Parser.Parse(newText, before.Tree, new TextChange(at, 0, 1));
+        var after = Parser.ReParse(newText, before.Tree, new TextChange(at, 0, 1));
 
         Assert.True(after.ReparsedDeclarations <= 2, $"reparsed {after.ReparsedDeclarations}");
         Assert.True(after.ReusedDeclarations >= declarations - 3, $"reused only {after.ReusedDeclarations} of {declarations}");
@@ -102,7 +102,7 @@ public class IncrementalParsingTests
     {
         var text = TestFiles.TypesText;
         var before = Parser.Parse(text);
-        var after = Parser.Parse(text, before.Tree, new TextChange(0, 0, 0));
+        var after = Parser.ReParse(text, before.Tree, new TextChange(0, 0, 0));
 
         Assert.True(after.Tree.Green.RootHandle == before.Tree.Green.RootHandle);
         Assert.Equal(0, after.ReparsedDeclarations);
@@ -127,7 +127,7 @@ public class IncrementalParsingTests
         for (var i = 0; i < 200; i++)
         {
             var (newText, change) = RandomEdit(random, text);
-            result = Parser.Parse(newText, result.Tree, change);
+            result = Parser.ReParse(newText, result.Tree, change);
             text = newText;
         }
 
