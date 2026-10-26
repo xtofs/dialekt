@@ -86,4 +86,17 @@ public class ParserTests
         Assert.Equal("ParserRule", LangiumLanguage.Instance.GetKindName(LangiumKinds.ParserRule));
         Assert.Equal("Absent", LangiumLanguage.Instance.GetKindName(SyntaxKind.Absent));
     }
+
+    [Fact]
+    public void Every_sample_grammar_parses_without_diagnostics()
+    {
+        var samples = Directory.GetFiles(AppContext.BaseDirectory, "*.langium");
+
+        Assert.True(samples.Length >= 5, "the samples are copied next to the tests");
+        foreach (var sample in samples)
+        {
+            var result = LangiumParser.Parse(File.ReadAllText(sample));
+            Assert.True(result.Diagnostics.Count == 0, $"{Path.GetFileName(sample)}: {string.Join("; ", result.Diagnostics.Take(3))}");
+        }
+    }
 }

@@ -10,7 +10,7 @@
   </PropertyGroup>
 
 <ItemGroup>
-  <None Include="*.langium" CopyToOutputDirectory="PreserveNewest" />
+  <None Include="..\..\samples\*.langium" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
 </ItemGroup>
 
 <ItemGroup>

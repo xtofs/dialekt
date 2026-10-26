@@ -14,12 +14,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\dialekt\dialekt.csproj" />
+    <ProjectReference Include="../../src/dialekt/dialekt.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\console\langium-grammar.langium" Link="langium-grammar.langium" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\console\langium-types.langium" Link="langium-types.langium" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\samples\*.langium" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/console/console.csproj" />
-    <Project Path="src/dialekt.runtime/dialekt.runtime.csproj" />
     <Project Path="src/dialekt/dialekt.csproj" />
-    <Project Path="src/dialekt.tests/dialekt.tests.csproj" />
+    <Project Path="src/dialekt.runtime/dialekt.runtime.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/dialekt.tests/dialekt.tests.csproj" />
   </Folder>
 </Solution>
