@@ -1,12 +1,13 @@
 using System.Diagnostics;
 using Dialekt;
+using Dialekt.Grammar;
 using Dialekt.Parsing;
 
 internal class Program
 {
     private static int Main(string[] args)
     {
-        // Usage: dotnet run --project src/console -- [--tree [--trivia]] [file...]
+        // Usage: dotnet run --project src/console -- [--tree [--trivia]] [--model] [file...]
         // Without files, parses langium-grammar.langium and langium-types.langium from the copies next to the executable.
         var showTree = args.Contains("--tree");
         var showTrivia = args.Contains("--trivia");
@@ -57,6 +58,16 @@ internal class Program
             foreach (var d in result.Diagnostics)
             {
                 Console.WriteLine("  {0}{1}", Path.GetFileName(file), d);
+            }
+
+            if (args.Contains("--model"))
+            {
+                var loaded = GrammarLoader.Load(content);
+                Console.Write(GrammarFormatter.Describe(loaded.Model));
+                foreach (var d in loaded.Diagnostics)
+                {
+                    Console.WriteLine("  {0}{1}", Path.GetFileName(file), d);
+                }
             }
 
             if (showTree)

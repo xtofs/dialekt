@@ -12,7 +12,12 @@ source text -> Scanner -> tokens -> Parser -> green tree (arena) -> red views ->
   `Language` (kind names, slot layouts), `ParserBase` (tokens, nodes, slots, error handling, incremental reuse), `ITokenizer`,
   diagnostics. Languages, handwritten or generated, build on it.
 - **`dialekt`**: the Langium language: `LangiumKinds`, `LangiumScanner`, `LangiumParser`, `LangiumLanguage`/`LangiumSchema`.
-- **`console`**: a command line tool that parses files and prints trees.
+- **`dialekt.grammar`**: the semantic model of a Langium grammar (`GrammarModel`: rules, elements, references resolved to
+  what they call, keywords, hidden terminals) built from a `SyntaxTree` by reading slots by name (`GrammarModelBuilder`).
+  It is the input of the code generator. The records have value equality and carry no positions, so two grammars that say
+  the same thing give equal models however they are laid out. Problems (unresolved or duplicate rules, missing entry rule,
+  constructs the generator does not support yet) are `GrammarDiagnostic`s with a position, kept apart from the model.
+- **`console`**: a command line tool that parses files, prints trees (`--tree`) and the grammar model (`--model`).
 - **`dialekt.tests`**: tests for all of the above.
 
 A language defines its kinds as constants of the runtime's `SyntaxKind` enum (numbered from `FirstLanguageKind`), a

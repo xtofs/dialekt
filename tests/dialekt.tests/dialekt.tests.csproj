@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/dialekt/dialekt.csproj" />
+    <ProjectReference Include="../../src/dialekt.grammar/dialekt.grammar.csproj" />
   </ItemGroup>
 
   <ItemGroup>

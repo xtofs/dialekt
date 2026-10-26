@@ -15,6 +15,7 @@
 
 <ItemGroup>
   <ProjectReference Include="..\dialekt\dialekt.csproj" />
+  <ProjectReference Include="..\dialekt.grammar\dialekt.grammar.csproj" />
 </ItemGroup>
   <ItemGroup>
     <Using Include="Dialekt.Langium" />
