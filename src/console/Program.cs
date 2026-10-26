@@ -7,7 +7,7 @@ internal class Program
     private static int Main(string[] args)
     {
         // Usage: dotnet run --project src/console -- [--tree [--trivia]] [file...]
-        // Without files, parses langium-grammar.langium and langium-types.langium from the repository root.
+        // Without files, parses langium-grammar.langium and langium-types.langium from the copies next to the executable.
         var showTree = args.Contains("--tree");
         var showTrivia = args.Contains("--trivia");
         var isEdit = args.Contains("--edit");
@@ -19,7 +19,7 @@ internal class Program
         foreach (var file in files)
         {
             var content = File.ReadAllText(file);
-            Parser.Parse(content);
+            LangiumParser.Parse(content);
         }
 
 
@@ -28,7 +28,7 @@ internal class Program
         {
             var content = File.ReadAllText(file);
             var sw = Stopwatch.StartNew();
-            var result = Parser.Parse(content);
+            var result = LangiumParser.Parse(content);
             sw.Stop();
 
             var arena = result.Tree.Arena;
@@ -37,7 +37,7 @@ internal class Program
                 file, count, arena.NodeCount, (float)arena.NodeCount / count, arena.Length, result.Diagnostics.Count, sw.ElapsedMilliseconds);
 
             // Parsing again on top of the previous tree must share every node with it.
-            var reparsed = Parser.Parse(content, result.Tree);
+            var reparsed = LangiumParser.Parse(content, result.Tree);
             Console.WriteLine("  reparse: {0}, arena grew by {1} bytes", reparsed.Tree.Green.RootHandle == result.Tree.Green.RootHandle ? "same root" : "NEW root", reparsed.Tree.Arena.Length - arena.Length);
 
             if (isEdit)
@@ -50,7 +50,7 @@ internal class Program
                 Console.WriteLine("edited: {0}",
                     edited[(at - 20)..at] + "⟨HERE⟩" + edited[at..(at + 20)].WithControlCharactersAsPictures());
 
-                var incremental = Parser.ReParse(edited, result.Tree, new TextChange(at, 0, insert.Length));
+                var incremental = LangiumParser.ReParse(edited, result.Tree, new TextChange(at, 0, insert.Length));
                 Console.WriteLine("  edit at {0}: reused {1} declarations, reparsed {2}", at, incremental.ReusedDeclarations, incremental.ReparsedDeclarations);
             }
 
@@ -73,14 +73,7 @@ internal class Program
     {
         if (files.Count == 0)
         {
-            var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "langium-grammar.langium")))
-            {
-                dir = dir.Parent;
-            }
-            var root = dir?.FullName ?? ".";
-            files = [Path.Combine(root, "langium-grammar.langium"), Path.Combine(root, "langium-types.langium")];
+            files = [Path.Combine(AppContext.BaseDirectory, "langium-grammar.langium"), Path.Combine(AppContext.BaseDirectory, "langium-types.langium")];
         }
-
     }
 }

@@ -1,13 +1,19 @@
-namespace Dialekt.Scanning;
+namespace Dialekt.Langium;
 
 using System.Text.RegularExpressions;
 using Dialekt.Green;
+using Dialekt.Scanning;
 
-internal class Scanner
+/// <summary>Splits Langium grammar text into tokens: trivia, literals, identifiers and the symbols of <see cref="LangiumFacts"/>.</summary>
+public sealed class LangiumScanner : ITokenizer
 {
+    public static LangiumScanner Instance { get; } = new();
+
+    IEnumerable<Token> ITokenizer.Scan(string content) => Scan(content);
+
     /// <summary>
-    /// Scans the whole input. Text that no pattern recognizes is returned as <see cref="Token.ErrorKind"/> tokens
-    /// (carrying a message) instead of silently ending the scan; the sequence always ends with an <see cref="Token.Eof"/> token.
+    /// Scans the whole input. Text that no pattern recognizes is returned as <see cref="SyntaxKind.ErrorToken"/> tokens
+    /// (carrying a message) instead of silently ending the scan; the sequence always ends with an <see cref="SyntaxKind.EndOfFileToken"/> token.
     /// </summary>
     public static IEnumerable<Token> Scan(string content)
     {
@@ -22,25 +28,38 @@ internal class Scanner
             else
             {
                 var (length, message) = MeasureError(content, pos.Offset);
-                token = MakeToken(Token.ErrorKind, content.Substring(pos.Offset, length), ref pos, message);
+                token = MakeToken(SyntaxKind.ErrorToken, content.Substring(pos.Offset, length), ref pos, message);
             }
             yield return token;
         }
-        yield return new Token(Token.Eof, "", new SourceSpan(pos, pos));
+        yield return new Token(SyntaxKind.EndOfFileToken, "", new SourceSpan(pos, pos));
     }
 
-    private static bool TryMatch(string content, int offset, out string kind, out string text)
+    private static bool TryMatch(string content, int offset, out SyntaxKind kind, out string text)
     {
         var match = TokenPatterns.TokenRegex().Match(content, offset);
         if (match.Success && match.Length > 0)
         {
             // var alternative = match.Groups.Cast<Group>().Skip(1).Single(g => g.Success);
             var succeeding = GetSucceedingGroup(match);
-            (kind, text) = (succeeding.Name, succeeding.Value);
+            (kind, text) = (KindOfGroup(succeeding.Name), succeeding.Value);
             return true;
         }
         return TryMatchSymbol(content, offset, out kind, out text);
     }
+
+    /// <summary>The regex group names of <see cref="TokenPatterns"/> are the token kinds.</summary>
+    private static SyntaxKind KindOfGroup(string groupName) => groupName switch
+    {
+        "Whitespace" => LangiumKinds.WhitespaceTrivia,
+        "SingleLineComment" => LangiumKinds.SingleLineCommentTrivia,
+        "MultiLineComment" => LangiumKinds.MultiLineCommentTrivia,
+        "StringLiteral" => LangiumKinds.StringLiteralToken,
+        "Number" => LangiumKinds.NumberToken,
+        "Identifier" => LangiumKinds.IdentifierToken,
+        "RegexLiteral" => LangiumKinds.RegexLiteralToken,
+        _ => throw new InvalidOperationException($"Unknown token pattern '{groupName}'."),
+    };
 
     private static Group GetSucceedingGroup(Match match)
     {
@@ -57,20 +76,19 @@ internal class Scanner
     }
 
     // Longest first so that e.g. `=>` and `?<=` are not split into shorter symbols.
-    private static bool TryMatchSymbol(string content, int offset, out string kind, out string text)
+    private static bool TryMatchSymbol(string content, int offset, out SyntaxKind kind, out string text)
     {
-        int maxLength = Math.Min(SyntaxFacts.MaxSymbolLength, content.Length - offset);
-        
+        int maxLength = Math.Min(LangiumFacts.MaxSymbolLength, content.Length - offset);
 
         for (var length = maxLength; length > 0; length--)
         {
-            if (SyntaxFacts.TryGetSymbolKind(content.AsSpan(offset, length), out _))
+            if (LangiumFacts.TryGetSymbolKind(content.AsSpan(offset, length), out var symbol))
             {
-                (kind, text) = (Token.SymbolKind, content.Substring(offset, length));
+                (kind, text) = (symbol, content.Substring(offset, length));
                 return true;
             }
         }
-        (kind, text) = ("", "");
+        (kind, text) = (SyntaxKind.None, "");
         return false;
     }
 
@@ -113,7 +131,7 @@ internal class Scanner
     /// <param name="text">The text of the token.</param>
     /// <param name="pos">The current position, which will be updated.</param>
     /// <param name="error">An optional error message.</param>
-    private static Token MakeToken(string kind, string text, ref Position pos, string? error = null)
+    private static Token MakeToken(SyntaxKind kind, string text, ref Position pos, string? error = null)
     {
         var start = pos;
         var (offset, line, column) = (pos.Offset + text.Length, pos.Line, pos.Column);

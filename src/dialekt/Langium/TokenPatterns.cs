@@ -1,8 +1,8 @@
-namespace Dialekt.Scanning;
+namespace Dialekt.Langium;
 
 using System.Text.RegularExpressions;
 
-static partial class TokenPatterns
+internal static partial class TokenPatterns
 {
     private const string NumberPattern = @"(?:NaN|-?(?:(?:\d*\.\d+|\d+)(?:[Ee][+-]?\d+)?|Infinity))(?!\w)";
 

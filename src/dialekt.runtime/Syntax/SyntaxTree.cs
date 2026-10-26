@@ -10,7 +10,7 @@ public sealed class SyntaxTree
 {
     private readonly Lazy<LineMap> _lineMap;
 
-    public SyntaxTree(GreenTree green, string source)
+    public SyntaxTree(GreenTree green, string source, Language language)
     {
         if (green.FullWidth != source.Length)
         {
@@ -18,10 +18,13 @@ public sealed class SyntaxTree
         }
         Green = green;
         Source = source;
+        Language = language;
         _lineMap = new Lazy<LineMap>(() => new LineMap(source));
     }
 
     public GreenTree Green { get; }
+    /// <summary>The language the tree was parsed as: names of kinds, slot layouts.</summary>
+    public Language Language { get; }
     public string Source { get; }
     public LineMap LineMap => _lineMap.Value;
     public SyntaxNode Root => new(this, Green.RootHandle, 0);
@@ -79,5 +82,5 @@ public sealed class SyntaxTree
     public int CountNodes() => Green.CountNodes();
 
     /// <summary>The same tree in a fresh arena that holds only the nodes reachable from the root (see <see cref="GreenTree.Compact"/>).</summary>
-    public SyntaxTree Compact() => new(Green.Compact(), Source);
+    public SyntaxTree Compact() => new(Green.Compact(), Source, Language);
 }

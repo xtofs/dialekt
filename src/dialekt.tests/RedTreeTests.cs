@@ -7,7 +7,7 @@ public class RedTreeTests
 {
     public static TheoryData<string> Texts => new() { "grammar", "types" };
 
-    private static SyntaxTree Parse(string name) => Parser.Parse(name == "grammar" ? TestFiles.GrammarText : TestFiles.TypesText).Tree;
+    private static SyntaxTree Parse(string name) => LangiumParser.Parse(name == "grammar" ? TestFiles.GrammarText : TestFiles.TypesText).Tree;
 
     [Theory]
     [MemberData(nameof(Texts))]
@@ -62,7 +62,7 @@ public class RedTreeTests
         }
         Assert.Equal(SyntaxKind.EndOfFileToken, tree.Root.FindToken(tree.Source.Length).Kind);
         // text inside a token maps to that token
-        var identifier = tree.Root.Descendants().First(n => n.Kind == SyntaxKind.IdentifierToken);
+        var identifier = tree.Root.Descendants().First(n => n.Kind == LangiumKinds.IdentifierToken);
         Assert.Equal(identifier, tree.Root.FindToken(identifier.TextStart));
     }
 
@@ -83,19 +83,19 @@ public class RedTreeTests
     [Fact]
     public void Node_text_excludes_leading_trivia()
     {
-        var tree = Parser.Parse("  /* c */ A: b=ID;\n").Tree;
+        var tree = LangiumParser.Parse("  /* c */ A: b=ID;\n").Tree;
         var rule = TestFiles.Members(tree).First();
-        Assert.Equal(SyntaxKind.ParserRule, rule.Kind);
+        Assert.Equal(LangiumKinds.ParserRule, rule.Kind);
         Assert.Equal("A: b=ID;", rule.Text);
         Assert.Equal("  /* c */ A: b=ID;", rule.FullText);
         Assert.Equal((1, 11), rule.StartLineAndColumn);
-        Assert.Equal([SyntaxKind.List, SyntaxKind.Grammar], rule.Ancestors().Select(a => a.Kind));
+        Assert.Equal([SyntaxKind.List, LangiumKinds.Grammar], rule.Ancestors().Select(a => a.Kind));
     }
 
     [Fact]
     public void Parent_of_a_navigated_node_is_exact_even_for_zero_width_children()
     {
-        var tree = Parser.Parse("A: b=ID;\nB: c=ID;\n").Tree;
+        var tree = LangiumParser.Parse("A: b=ID;\nB: c=ID;\n").Tree;
         var rules = TestFiles.Members(tree).ToList();
 
         foreach (var rule in rules)

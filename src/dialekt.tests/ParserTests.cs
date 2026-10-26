@@ -7,15 +7,15 @@ public class ParserTests
     [Fact]
     public void The_langium_files_parse_without_diagnostics()
     {
-        Assert.Empty(Parser.Parse(TestFiles.GrammarText).Diagnostics);
-        Assert.Empty(Parser.Parse(TestFiles.TypesText).Diagnostics);
+        Assert.Empty(LangiumParser.Parse(TestFiles.GrammarText).Diagnostics);
+        Assert.Empty(LangiumParser.Parse(TestFiles.TypesText).Diagnostics);
     }
 
     [Fact]
     public void Parsing_on_top_of_the_previous_tree_shares_all_nodes()
     {
-        var first = Parser.Parse(TestFiles.GrammarText);
-        var second = Parser.Parse(TestFiles.GrammarText, first.Tree);
+        var first = LangiumParser.Parse(TestFiles.GrammarText);
+        var second = LangiumParser.Parse(TestFiles.GrammarText, first.Tree);
 
         Assert.True(second.Tree.Green.RootHandle == first.Tree.Green.RootHandle);
         Assert.Equal(first.Tree.Arena.Length, second.Tree.Arena.Length);
@@ -32,16 +32,16 @@ public class ParserTests
     [InlineData("B: x=ID /* open\n", 1, 9, "Unterminated comment")]
     public void Errors_are_reported_with_line_and_column(string text, int line, int column, string message)
     {
-        var diagnostic = Assert.Single(Parser.Parse(text).Diagnostics);
+        var diagnostic = Assert.Single(LangiumParser.Parse(text).Diagnostics);
         Assert.Equal((line, column, message), (diagnostic.Line, diagnostic.Column, diagnostic.Message));
     }
 
     [Fact]
     public void Parsing_continues_after_an_error()
     {
-        var result = Parser.Parse("A: b=; B: c=ID; C: d=; D: 'ok';\n");
+        var result = LangiumParser.Parse("A: b=; B: c=ID; C: d=; D: 'ok';\n");
         Assert.Equal(2, result.Diagnostics.Count);
-        Assert.Equal(2, TestFiles.Members(result.Tree).Count(n => n.Kind == SyntaxKind.ParserRule));
+        Assert.Equal(2, TestFiles.Members(result.Tree).Count(n => n.Kind == LangiumKinds.ParserRule));
         Assert.Equal(2, TestFiles.Members(result.Tree).Count(n => n.Kind == SyntaxKind.Error));
     }
 
@@ -56,20 +56,34 @@ public class ParserTests
         var kinds = new List<SyntaxKind>();
         foreach (var symbol in symbols)
         {
-            Assert.True(SyntaxFacts.TryGetSymbolKind(symbol, out var kind), $"'{symbol}' is not recognized");
+            Assert.True(LangiumFacts.TryGetSymbolKind(symbol, out var kind), $"'{symbol}' is not recognized");
             kinds.Add(kind);
         }
         Assert.Equal(symbols.Length, kinds.Distinct().Count());
-        Assert.Equal(SyntaxFacts.MaxSymbolLength, symbols.Max(s => s.Length));
+        Assert.Equal(LangiumFacts.MaxSymbolLength, symbols.Max(s => s.Length));
 
         // nothing longer than MaxSymbolLength can be a symbol: extend every symbol by every symbol character
         var alphabet = symbols.SelectMany(s => s).Distinct().ToArray();
-        foreach (var symbol in symbols.Where(s => s.Length == SyntaxFacts.MaxSymbolLength))
+        foreach (var symbol in symbols.Where(s => s.Length == LangiumFacts.MaxSymbolLength))
         {
             foreach (var c in alphabet)
             {
-                Assert.False(SyntaxFacts.TryGetSymbolKind(symbol + c, out _), $"'{symbol}{c}' must not be a symbol");
+                Assert.False(LangiumFacts.TryGetSymbolKind(symbol + c, out _), $"'{symbol}{c}' must not be a symbol");
             }
         }
+    }
+
+    [Fact]
+    public void Langium_kinds_have_unique_numbers_after_the_runtime_kinds()
+    {
+        var fields = typeof(LangiumKinds).GetFields().Where(f => f.IsLiteral).ToList();
+        var numbers = fields.Select(f => (int)(SyntaxKind)f.GetRawConstantValue()!).ToList();
+
+        Assert.Equal(numbers.Count, numbers.Distinct().Count());
+        Assert.True(numbers.Min() >= (int)SyntaxKind.FirstLanguageKind);
+        // no gaps, so that a name table indexed by kind stays small
+        Assert.Equal((int)SyntaxKind.FirstLanguageKind + numbers.Count - 1, numbers.Max());
+        Assert.Equal("ParserRule", LangiumLanguage.Instance.GetKindName(LangiumKinds.ParserRule));
+        Assert.Equal("Absent", LangiumLanguage.Instance.GetKindName(SyntaxKind.Absent));
     }
 }

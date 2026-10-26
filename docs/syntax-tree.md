@@ -7,7 +7,7 @@ Untyped, immutable storage in a `GreenArena`: a node is a `SyntaxKind`, a width 
 nothing about absolute positions or parents, and equal subtrees are one node (`GreenNodeCache`). Whitespace and comments are
 leading trivia children of the following token, so the tree is lossless: the widths of the root's tokens add up to the source.
 
-Every node kind has a **fixed slot layout** (`SyntaxSchema`, a static table in code):
+Every node kind has a **fixed slot layout**, defined per language (`Language.GetSlots`; for Langium a static table in code, `LangiumSchema`):
 
 | Slot shape | Child in the slot |
 |---|---|
@@ -15,7 +15,7 @@ Every node kind has a **fixed slot layout** (`SyntaxSchema`, a static table in c
 | Optional | the part, or the shared zero-width `Absent` node |
 | List / SeparatedList | a `List` / `SeparatedList` node holding the items (and separator tokens), possibly empty |
 
-`Parser.Close` fits the children it collected to the slots of the kind, so `ParserRule` slot 1 is always its name,
+`ParserBase.Close` fits the children it collected to the slots of the kind, so `ParserRule` slot 1 is always its name,
 whether or not it has a modifier. `Error` nodes (a declaration that could not be parsed) are free-form.
 
 ## Red layer: struct views (`src/dialekt/Syntax/`)
@@ -47,13 +47,13 @@ node whose `Children` are the items (separated lists alternate items and separat
   that must survive an edit is keyed by green handle or by name, never kept as a view.
 
 ## Adding or changing a node kind
-1. Add the kind to `SyntaxKind`.
-2. Describe its slots in `SyntaxSchema.Build` (and `IsInCategory` if it joins a category).
+1. Add the kind to `LangiumKinds` (the next unused number).
+2. Describe its slots in `LangiumSchema.Build` (and `IsInCategory` if it joins a category).
 3. Make the parser call `Close(mark, kind)` with the children in slot order.
 
 The schema conformance tests tell you if the parser and the schema disagree.
 
 ## Incremental parsing
-`Parser.ReParse(newText, previousTree, textChange)` rescans the text but takes over the top-level declarations of the
-previous tree that the edit did not touch (see `Parser.TryReuse` for the conditions). `ParseResult.ReusedDeclarations` and
+`LangiumParser.ReParse(newText, previousTree, textChange)` rescans the text but takes over the top-level declarations of the
+previous tree that the edit did not touch (see `ParserBase.TryReuse` for the conditions). `ParseResult.ReusedDeclarations` and
 `ReparsedDeclarations` report what happened. Each re-parse forks the arena; `SyntaxTree.Compact()` drops old versions.

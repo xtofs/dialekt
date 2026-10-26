@@ -18,8 +18,8 @@ public class IncrementalParsingTests
     /// <summary>The incremental result must be exactly what a full parse gives; nodes are hash-consed, so equal structure is an equal root handle.</summary>
     private static ParseResult ApplyAndCheck(ParseResult before, string oldText, TextChange change, string newText, string context)
     {
-        var incremental = Parser.ReParse(newText, before.Tree, change);
-        var full = Parser.Parse(newText, incremental.Tree);
+        var incremental = LangiumParser.ReParse(newText, before.Tree, change);
+        var full = LangiumParser.Parse(newText, incremental.Tree);
 
         Assert.True(full.Tree.Green.RootHandle == incremental.Tree.Green.RootHandle, $"different tree: {context}");
         Assert.Equal(Describe(full), Describe(incremental));
@@ -33,7 +33,7 @@ public class IncrementalParsingTests
     {
         var random = new Random(12345);
         var baseText = Load(file);
-        var baseResult = Parser.Parse(baseText);
+        var baseResult = LangiumParser.Parse(baseText);
 
         for (var i = 0; i < 600; i++)
         {
@@ -48,7 +48,7 @@ public class IncrementalParsingTests
     {
         var random = new Random(777);
         var text = Load(file);
-        var result = Parser.Parse(text);
+        var result = LangiumParser.Parse(text);
 
         for (var i = 0; i < 300; i++)
         {
@@ -63,7 +63,7 @@ public class IncrementalParsingTests
     public void Edits_at_declaration_boundaries_give_the_same_tree(string file)
     {
         var text = Load(file);
-        var result = Parser.Parse(text);
+        var result = LangiumParser.Parse(text);
         var boundaries = TestFiles.Members(result.Tree).SelectMany(c => new[] { c.Position, c.TextStart, c.End }).Distinct().ToList();
         var random = new Random(99);
 
@@ -84,12 +84,12 @@ public class IncrementalParsingTests
     public void A_small_edit_inside_one_rule_reparses_only_that_rule()
     {
         var text = TestFiles.GrammarText;
-        var before = Parser.Parse(text);
+        var before = LangiumParser.Parse(text);
         var declarations = TestFiles.Members(before.Tree).Count();
 
         var at = text.IndexOf("'interface' name=ID", StringComparison.Ordinal) + 3;
         var newText = text.Insert(at, "x");
-        var after = Parser.ReParse(newText, before.Tree, new TextChange(at, 0, 1));
+        var after = LangiumParser.ReParse(newText, before.Tree, new TextChange(at, 0, 1));
 
         Assert.True(after.ReparsedDeclarations <= 2, $"reparsed {after.ReparsedDeclarations}");
         Assert.True(after.ReusedDeclarations >= declarations - 3, $"reused only {after.ReusedDeclarations} of {declarations}");
@@ -100,8 +100,8 @@ public class IncrementalParsingTests
     public void An_unchanged_text_reuses_everything()
     {
         var text = TestFiles.TypesText;
-        var before = Parser.Parse(text);
-        var after = Parser.ReParse(text, before.Tree, new TextChange(0, 0, 0));
+        var before = LangiumParser.Parse(text);
+        var after = LangiumParser.ReParse(text, before.Tree, new TextChange(0, 0, 0));
 
         Assert.True(after.Tree.Green.RootHandle == before.Tree.Green.RootHandle);
         Assert.Equal(0, after.ReparsedDeclarations);
@@ -111,7 +111,7 @@ public class IncrementalParsingTests
     public void An_edit_that_swallows_later_declarations_is_handled()
     {
         var text = TestFiles.TypesText;
-        var before = Parser.Parse(text);
+        var before = LangiumParser.Parse(text);
         var change = new TextChange(0, 0, 2);
         var after = ApplyAndCheck(before, text, change, "/*" + text, "open comment at start");
         Assert.NotEmpty(after.Diagnostics);
@@ -122,11 +122,11 @@ public class IncrementalParsingTests
     {
         var random = new Random(5);
         var text = TestFiles.GrammarText;
-        var result = Parser.Parse(text);
+        var result = LangiumParser.Parse(text);
         for (var i = 0; i < 200; i++)
         {
             var (newText, change) = RandomEdit(random, text);
-            result = Parser.ReParse(newText, result.Tree, change);
+            result = LangiumParser.ReParse(newText, result.Tree, change);
             text = newText;
         }
 
@@ -136,7 +136,7 @@ public class IncrementalParsingTests
         Assert.Equal(result.Tree.CountNodes(), compact.CountNodes());
         Assert.Equal(Shape(result.Tree.Root), Shape(compact.Root));
         // Parsing on top of the compacted tree still shares everything.
-        Assert.True(Parser.Parse(text, compact).Tree.Green.RootHandle == compact.Green.RootHandle);
+        Assert.True(LangiumParser.Parse(text, compact).Tree.Green.RootHandle == compact.Green.RootHandle);
     }
 
     private static string Shape(Dialekt.Syntax.SyntaxNode root) =>

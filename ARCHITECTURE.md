@@ -7,6 +7,17 @@ placeholders, adding a node kind) are in [docs/syntax-tree.md](docs/syntax-tree.
 source text -> Scanner -> tokens -> Parser -> green tree (arena) -> red views -> semantic model (planned)
 ```
 
+## Projects
+- **`dialekt.runtime`**: everything that does not depend on a particular language: the green tree and arena, the red views,
+  `Language` (kind names, slot layouts), `ParserBase` (tokens, nodes, slots, error handling, incremental reuse), `ITokenizer`,
+  diagnostics. Languages, handwritten or generated, build on it.
+- **`dialekt`**: the Langium language: `LangiumKinds`, `LangiumScanner`, `LangiumParser`, `LangiumLanguage`/`LangiumSchema`.
+- **`console`**: a command line tool that parses files and prints trees.
+- **`dialekt.tests`**: tests for all of the above.
+
+A language defines its kinds as constants of the runtime's `SyntaxKind` enum (numbered from `FirstLanguageKind`), a
+`Language` object, a tokenizer producing those kinds, and a parser that derives from `ParserBase` with one method per rule.
+
 ## Green: structure without place
 
 - **What it is:** immutable storage in a `GreenArena`, hash-consed through `GreenNodeCache`. Nodes have no positions and no

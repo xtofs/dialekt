@@ -38,6 +38,7 @@ public class TreeFormatter(string fileName)
             indent += _vertical;
         }
 
+        var language = node.Tree.Language;
         var (line, column) = node.StartLineAndColumn;
         var text = "";
         if (node.IsToken && node.Kind != SyntaxKind.EndOfFileToken)
@@ -45,9 +46,9 @@ public class TreeFormatter(string fileName)
             text = " " + node.Text.WithControlCharactersAsPictures();
         }
         var slot = slotName is null ? "" : $" {slotName}:";
-        Console.WriteLine($"{slot} {node.Kind}{text} {_fileName}({line},{column})");
+        Console.WriteLine($"{slot} {language.GetKindName(node.Kind)}{text} {_fileName}({line},{column})");
 
-        var slots = SyntaxSchema.GetSlots(node.Kind);
+        var slots = language.GetSlots(node.Kind);
         var visible = new List<(SyntaxNode Child, string? Slot)>();
         var index = 0;
         foreach (var child in node.Children)

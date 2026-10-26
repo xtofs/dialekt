@@ -10,4 +10,11 @@
   <ItemGroup>
     <InternalsVisibleTo Include="dialekt.tests" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\dialekt.runtime\dialekt.runtime.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Dialekt.Langium" />
+  </ItemGroup>
 </Project>

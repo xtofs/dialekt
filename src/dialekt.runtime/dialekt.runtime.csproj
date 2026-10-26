@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The language-independent part: green tree, red views, parser machinery. Generated and handwritten languages build on it. -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Dialekt</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="dialekt" />
+    <InternalsVisibleTo Include="dialekt.tests" />
+  </ItemGroup>
+
+</Project>

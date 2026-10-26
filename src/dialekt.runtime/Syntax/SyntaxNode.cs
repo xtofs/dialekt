@@ -76,7 +76,7 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     }
 
     /// <summary>
-    /// The child in the slot called <paramref name="name"/> (see <see cref="SyntaxSchema"/>). For an optional part that is not
+    /// The child in the slot called <paramref name="name"/> (see <see cref="Language.GetSlots"/>). For an optional part that is not
     /// there this is an <see cref="SyntaxKind.Absent"/> node (check <see cref="IsAbsent"/>); for a list slot it is the list node,
     /// whose <see cref="Children"/> are the items.
     /// </summary>
@@ -86,12 +86,12 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
         return TryGetSlot(name, out var slot)
             ? slot
             : throw new ArgumentException(
-                $"{Kind} has no slot '{name}'; its slots are: {string.Join(", ", SyntaxSchema.GetSlots(Kind).ToArray().Select(s => s.Name))}.", nameof(name));
+                $"{Tree.Language.GetKindName(Kind)} has no slot '{name}'; its slots are: {string.Join(", ", Tree.Language.GetSlots(Kind).ToArray().Select(s => s.Name))}.", nameof(name));
     }
 
     public bool TryGetSlot(string name, out SyntaxNode slot)
     {
-        var index = SyntaxSchema.IndexOf(Kind, name);
+        var index = Tree.Language.IndexOf(Kind, name);
         slot = index >= 0 ? GetChild(index) : default;
         return index >= 0;
     }
@@ -178,7 +178,7 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     public static bool operator ==(SyntaxNode left, SyntaxNode right) => left.Equals(right);
     public static bool operator !=(SyntaxNode left, SyntaxNode right) => !left.Equals(right);
 
-    public override string ToString() => $"{Kind} [{Position}..{End})";
+    public override string ToString() => $"{Tree.Language.GetKindName(Kind)} [{Position}..{End})";
 
     /// <summary>Allocation-free enumeration of the children of a node.</summary>
     public readonly struct ChildList(SyntaxNode parent) : IEnumerable<SyntaxNode>
